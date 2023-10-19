@@ -3,6 +3,6 @@
 
 lithium::magic!(main);
 fn main() {
-    x86_64::instructions::interrupts::int3();
+    println!("Hello, world!");
+    println!("It did not crash.");
 }
-

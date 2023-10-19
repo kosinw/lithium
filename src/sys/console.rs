@@ -19,13 +19,13 @@ pub enum Color {
     LightBlue = 94,
     Pink = 95,
     LightCyan = 96,
-    White = 97
+    White = 97,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct Style {
     foreground: Option<Color>,
-    background: Option<Color>
+    background: Option<Color>,
 }
 
 impl Style {
@@ -38,11 +38,17 @@ impl Style {
     }
 
     pub fn foreground(self, color: Color) -> Self {
-        Self { foreground: Some(color), background: self.background  }
+        Self {
+            foreground: Some(color),
+            background: self.background,
+        }
     }
 
     pub fn background(self, color: Color) -> Self {
-        Self { foreground: self.foreground, background: Some(color) }
+        Self {
+            foreground: self.foreground,
+            background: Some(color),
+        }
     }
 }
 

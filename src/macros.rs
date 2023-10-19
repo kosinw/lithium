@@ -4,21 +4,25 @@ macro_rules! magic {
         use core::panic::PanicInfo;
         use lithium::*;
 
+        bootloader::entry_point!(kernel_main);
+
         fn kernel_main(boot_info: &'static bootloader::BootInfo) -> ! {
             $crate::init(boot_info);
 
             let f: fn() = $path;
             f();
 
-            loop {}
+            loop {
+                x86_64::instructions::hlt();
+            }
         }
-
-        bootloader::entry_point!(kernel_main);
 
         #[panic_handler]
         fn panic(info: &PanicInfo) -> ! {
             err!("{}", info);
-            loop {}
+            loop {
+                x86_64::instructions::hlt();
+            }
         }
     };
 }
@@ -70,7 +74,7 @@ macro_rules! err {
         let csi_red = $crate::sys::console::Style::new().foreground($crate::sys::console::Color::Red);
         let reset_color = $crate::sys::console::Style ::reset();
 
-        $crate::print!("{}[ ERR ]{} ", csi_red, reset_color);
+        $crate::print!("{}[ ERROR ]{} ", csi_red, reset_color);
         $crate::print!("{}", format_args!($($arg)*));
         $crate::println!();
     });
