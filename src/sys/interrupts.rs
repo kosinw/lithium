@@ -77,7 +77,8 @@ irq_handler!(irq13_handler, 13);
 irq_handler!(irq14_handler, 14);
 irq_handler!(irq15_handler, 15);
 
-pub fn init() {
+pub(crate) fn init() {
+    crate::info!("Initializing IDT...");
     IDT.load();
     unsafe {
         let mut pics = PICS.lock();

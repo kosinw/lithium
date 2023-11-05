@@ -5,7 +5,6 @@ BOOTIMAGE	:= 	target/kernel.img
 QEMU		:= 	qemu-system-x86_64
 QEMU_OPTS	:=	-nographic							\
 				-m $(MEMORY) -machine pc 			\
-				-d int								\
 			   	-drive file=$(BOOTIMAGE),format=raw \
 
 

@@ -45,12 +45,25 @@ pub fn print_fmt(args: fmt::Arguments) {
     })
 }
 
-pub fn init() {
+pub(crate) fn init() {
     SERIAL.lock().init();
     crate::sys::interrupts::register_irq_handler(4, serial_intr_handler);
+
+    crate::println!("Welcome to the \x1b[34mLithium\x1b[0m Operating System!\n\n");
+    crate::info!("Starting kernel version {}...", env!("CARGO_PKG_VERSION"));
 }
 
 fn serial_intr_handler(_stack_frame: InterruptStackFrame) {
     let ch = SERIAL.lock().read_byte();
-    crate::print!("{}", (ch as char));
+    if ch == 0xFF {
+        return;
+    }
+
+    let p = match ch as char {
+        '\r' => '\n',
+        '\x7F' => '\x08',
+        c => c
+    };
+
+    crate::sys::console::keypress(p);
 }

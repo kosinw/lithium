@@ -1,6 +1,64 @@
-use core::fmt;
+use alloc::string::{String, ToString};
+use core::{
+    fmt,
+    sync::atomic::{AtomicBool, Ordering},
+};
+use lazy_static::lazy_static;
+use spin::Mutex;
 
-#[allow(dead_code)]
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ({
+        $crate::sys::serial::print_fmt(format_args!($($arg)*));
+    });
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ({
+        $crate::print!("\n");
+    });
+    ($($arg:tt)*) => ({
+        $crate::print!("{}\n", format_args!($($arg)*));
+    });
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => ({
+        let csi_green = $crate::sys::console::Style::new().foreground($crate::sys::console::Color::Green);
+        let reset_color = $crate::sys::console::Style::reset();
+
+        $crate::print!("{}[ INFO ]{} ", csi_green, reset_color);
+        $crate::print!("{}", format_args!($($arg)*));
+        $crate::println!();
+    });
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => ({
+        let csi_yellow = $crate::sys::console::Style::new().foreground($crate::sys::console::Color::Yellow);
+        let reset_color = $crate::sys::console::Style::reset();
+
+        $crate::print!("{}[ DEBUG ]{} ", csi_yellow, reset_color);
+        $crate::print!("{}", format_args!($($arg)*));
+        $crate::println!();
+    });
+}
+
+#[macro_export]
+macro_rules! err {
+    ($($arg:tt)*) => ({
+        let csi_red = $crate::sys::console::Style::new().foreground($crate::sys::console::Color::Red);
+        let reset_color = $crate::sys::console::Style::reset();
+
+        $crate::print!("{}[ ERROR ]{} ", csi_red, reset_color);
+        $crate::print!("{}", format_args!($($arg)*));
+        $crate::println!();
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Color {
@@ -64,6 +122,75 @@ impl fmt::Display for Style {
             write!(f, "\x1b[{},", (bg as u8) + 10)
         } else {
             write!(f, "\x1b[0m")
+        }
+    }
+}
+
+pub struct Console {
+    stdin: Mutex<String>,
+    echo: AtomicBool,
+}
+
+impl Console {
+    fn new() -> Self {
+        Self {
+            stdin: Mutex::new(String::new()),
+            echo: AtomicBool::new(true),
+        }
+    }
+
+    pub fn is_echo(&self) -> bool {
+        self.echo.load(Ordering::SeqCst)
+    }
+
+    pub fn set_echo(&mut self, b: bool) {
+        self.echo.store(b, Ordering::SeqCst);
+    }
+}
+
+lazy_static! {
+    static ref CONSOLE: Mutex<Console> = Mutex::new(Console::new());
+}
+
+const ETX_KEY: char = '\x03'; // End of Text
+const EOT_KEY: char = '\x04'; // End of Transmission
+const BS_KEY: char = '\x08'; // Backspace
+const ESC_KEY: char = '\x1B'; // Escape
+
+pub fn is_echo_enabled() -> bool {
+    CONSOLE.lock().is_echo()
+}
+
+pub fn enable_echo() {
+    CONSOLE.lock().set_echo(true)
+}
+
+pub fn disable_echo() {
+    CONSOLE.lock().set_echo(false)
+}
+
+pub fn keypress(key: char) {
+    let console = CONSOLE.lock();
+    let mut stdin = console.stdin.lock();
+
+    if key == BS_KEY {
+        if let Some(c) = stdin.pop() {
+            let n = match c {
+                ETX_KEY | EOT_KEY | ESC_KEY => 2,
+                _ => c.len_utf8(),
+            };
+
+            crate::print!("{}", BS_KEY.to_string().repeat(n));
+        }
+    } else {
+        stdin.push(key);
+        if console.is_echo() {
+            match key {
+                ETX_KEY => crate::print!("^C"),
+                EOT_KEY => crate::print!("^D"),
+                ESC_KEY => crate::print!("^["),
+                _ => crate::print!("{}", key),
+            }
         }
     }
 }

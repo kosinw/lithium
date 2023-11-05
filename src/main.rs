@@ -1,8 +1,11 @@
 #![no_std]
 #![no_main]
 
+use alloc::vec;
+
 lithium::magic!(main);
+
 fn main() {
-    println!("Hello, world!");
-    println!("It did not crash.");
+    let v = vec![1, 2, 3, 4];
+    println!("the one piece is real!, {:?}", v);
 }

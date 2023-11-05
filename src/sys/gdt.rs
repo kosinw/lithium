@@ -37,9 +37,11 @@ struct Selectors {
     tss_selector: SegmentSelector,
 }
 
-pub fn init() {
+pub(crate) fn init() {
     use x86_64::instructions::segmentation::{Segment, CS};
     use x86_64::instructions::tables::load_tss;
+
+    crate::info!("Initializing GDT...");
 
     GDT.0.load();
     unsafe {

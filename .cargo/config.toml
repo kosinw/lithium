@@ -3,4 +3,4 @@ target = "cfg/x86_64-lithium.json"
 
 [unstable]
 build-std-features = ["compiler-builtins-mem"]
-build-std = ["core", "compiler_builtins"]
+build-std = ["core", "compiler_builtins", "alloc"]

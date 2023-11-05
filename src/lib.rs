@@ -1,18 +1,47 @@
 #![no_std]
 #![feature(abi_x86_interrupt)]
 
-pub mod macros;
+extern crate alloc;
+
 pub mod sys;
 
-pub fn init(_boot_info: &'static bootloader::BootInfo) {
+#[macro_export]
+macro_rules! magic {
+    ($path:path) => {
+        use core::panic::PanicInfo;
+        use lithium::*;
+
+        extern crate alloc;
+
+        bootloader::entry_point!(kernel_main);
+
+        fn kernel_main(boot_info: &'static bootloader::BootInfo) -> ! {
+            $crate::init(boot_info);
+
+            let f: fn() = $path;
+            f();
+
+            loop {
+                x86_64::instructions::hlt();
+            }
+        }
+
+        #[panic_handler]
+        fn panic(info: &PanicInfo) -> ! {
+            err!("{}", info);
+            loop {
+                x86_64::instructions::hlt();
+            }
+        }
+    };
+}
+
+pub fn init(boot_info: &'static bootloader::BootInfo) {
+    sys::serial::init();
     sys::gdt::init();
     sys::interrupts::init();
-    sys::serial::init();
-
-    println!("welcome to \x1b[34mlithium\x1b[0m!\n\n");
-    info!("Starting kernel version {}...", env!("CARGO_PKG_VERSION"));
-
-    sys::memory::init();
+    sys::time::init();
+    sys::memory::init(boot_info);
 
     println!();
 }
