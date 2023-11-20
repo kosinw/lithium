@@ -49,7 +49,7 @@ pub(crate) fn init() {
     SERIAL.lock().init();
     crate::sys::interrupts::register_irq_handler(4, serial_intr_handler);
 
-    crate::println!("Welcome to the \x1b[34mLithium\x1b[0m Operating System!\n\n");
+    crate::println!("Welcome to the \x1b[34mLithium\x1b[0m operating system!\n\n");
     crate::info!("Starting kernel version {}...", env!("CARGO_PKG_VERSION"));
 }
 
