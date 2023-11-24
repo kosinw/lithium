@@ -1,0 +1,9 @@
+[package]
+name = "lithium"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "kernel"
+path = "kernel/lib.rs"
+crate-type = ["staticlib"]
