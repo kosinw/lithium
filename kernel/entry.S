@@ -6,7 +6,7 @@ extern  kernel_main
 
 KERNBASE        equ 0xffff800000000000
 PAGESIZE        equ 4096
-STACKSIZE       equ PAGESIZE*4
+STACKSIZE       equ PAGESIZE
 
 MAGIC           equ 0x1BADB002
 MBALIGN         equ 1 << 0

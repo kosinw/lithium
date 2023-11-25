@@ -1,9 +1,62 @@
 #![allow(dead_code)]
 
 pub mod asm {
+    use super::segment::{DescriptorTablePointer, SegmentSelector};
+    use bitflags::bitflags;
     use core::arch::asm;
 
-    use super::segment::{DescriptorTablePointer,SegmentSelector};
+    bitflags! {
+        pub struct RFlags: u64 {
+            const ID = 1 << 21;
+            const VIRTUAL_INTERRUPT_PENDING = 1 << 20;
+            const VIRTUAL_INTERRUPT = 1 << 19;
+            const ALIGNMENT_CHECK = 1 << 18;
+            const VIRTUAL_8086_MODE = 1 << 17;
+            const RESUME_FLAG = 1 << 16;
+            const NESTED_TASK = 1 << 14;
+            const IOPL_HIGH = 1 << 13;
+            const IOPL_LOW = 1 << 12;
+            const OVERFLOW_FLAG = 1 << 11;
+            const DIRECTION_FLAG = 1 << 10;
+            const INTERRUPT_FLAG = 1 << 9;
+            const TRAP_FLAG = 1 << 8;
+            const SIGN_FLAG = 1 << 7;
+            const ZERO_FLAG = 1 << 6;
+            const AUXILIARY_CARRY_FLAG = 1 << 4;
+            const PARITY_FLAG = 1 << 2;
+            const CARRY_FLAG = 1;
+        }
+    }
+
+    pub unsafe fn r_flags() -> RFlags {
+        let raw: u64;
+        asm!("pushfq; popq {}", out(reg) raw, options(preserves_flags));
+        RFlags::from_bits_truncate(raw)
+    }
+
+    /// Writes to the RFLAGS register, preserves already set bits.
+    pub unsafe fn w_flags(flags: RFlags) {
+        let old = r_flags().bits();
+        let reserved = old & !(RFlags::all().bits());
+        let raw = reserved | flags.bits();
+        asm!("push {}; popfq", in (reg) raw, options(preserves_flags));
+    }
+
+    pub unsafe fn sti() {
+        asm!("sti");
+    }
+
+    pub unsafe fn cli() {
+        asm!("cli");
+    }
+
+    pub unsafe fn pause() {
+        asm!("pause");
+    }
+
+    pub unsafe fn is_interrupt_enabled() -> bool {
+        r_flags().contains(RFlags::INTERRUPT_FLAG)
+    }
 
     pub unsafe fn w_gsbase(w: u64) {
         asm!("wrgsbase {}", in(reg) w);
@@ -39,8 +92,7 @@ pub mod asm {
             "retfq",
             "1:",
             selector = in(reg) u64::from(selector.0),
-            tmp = lateout(reg) _,
-            options(preserves_flags)
+            tmp = lateout(reg) _
         );
     }
 
@@ -54,6 +106,11 @@ pub mod asm {
 
     pub unsafe fn lgdt(gdt: &DescriptorTablePointer) {
         asm!("lgdt [{}]", in (reg) gdt, options(preserves_flags));
+    }
+
+    pub unsafe fn xswap(word: &mut u64, mut value: u64) -> u64 {
+        asm!("lock; xchg {0}, {1}", inout(reg) value, in(reg) word);
+        value
     }
 }
 
@@ -92,7 +149,7 @@ pub mod segment {
     #[repr(C, packed(2))]
     pub struct DescriptorTablePointer {
         pub size: u16,
-        pub base: u64
+        pub base: u64,
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -117,7 +174,7 @@ pub mod segment {
                         panic!("too many entries in GDT");
                     }
                     self.push(value)
-                },
+                }
                 SegmentDescriptor::SystemSegment(val_low, val_hi) => {
                     if self.len > self.table.len().saturating_sub(2) {
                         // too many items in GDT
@@ -140,7 +197,7 @@ pub mod segment {
         fn pointer(&self) -> DescriptorTablePointer {
             DescriptorTablePointer {
                 size: (self.len * size_of::<u64>() - 1) as u16,
-                base: self.table.as_ptr() as u64
+                base: self.table.as_ptr() as u64,
             }
         }
 
@@ -302,18 +359,13 @@ pub mod paging {
 }
 
 pub mod cpu {
-    use paging::Page;
-    use segment::{GlobalDescriptorTable, TaskStateSegment, SegmentDescriptor};
+    use super::asm::{self, is_interrupt_enabled};
+    use super::paging::Page;
+    use super::segment::{GlobalDescriptorTable, SegmentDescriptor, TaskStateSegment};
+    use core::arch::asm;
 
     use crate::param::PAGESIZE;
 
-    /// Represents the long-running state of a multiprocessor core.
-    ///
-    /// Example of state that needs ot be tracked:
-    /// - Clock frequency
-    /// - Interrupt information
-    /// - Task state segment (which tracks temporary stacks to use during trap handlers)
-    /// - Global descriptor table (which keeps track of segments)
     #[derive(Debug, Clone, Copy)]
     #[repr(C, align(4096))]
     pub struct Cpu {
@@ -326,12 +378,33 @@ pub mod cpu {
         gdt: GlobalDescriptorTable, // global descriptor table
     }
 
-    /// Initialization routine for initializing multiprocessor core state.
-    ///
-    /// # Safety
-    ///
-    /// This function uses inline assembly to write to special machine registers;
-    /// therefore, making it inherently unsafe to call.
+    pub unsafe fn push_interrupt_off() {
+        let cpu = current_mut();
+        let enabled = is_interrupt_enabled();
+
+        asm::cli();
+
+        if cpu.noff == 0 {
+            cpu.intena = enabled;
+        }
+
+        cpu.noff += 1;
+    }
+
+    pub unsafe fn pop_interrupt_off() {
+        let cpu = current_mut();
+        let enabled = is_interrupt_enabled();
+
+        assert!(!enabled, "pop_intr(): interrupts should not be enabled");
+        assert!(cpu.noff != 0, "pop_intr(): noff = 0");
+
+        cpu.noff -= 1;
+
+        if cpu.noff == 0 && cpu.intena {
+            asm::sti();
+        }
+    }
+
     pub unsafe fn init(page: &mut Page, id: u32) {
         let core = &mut *(page.as_ptr_mut() as *mut Cpu);
         let mut tss = TaskStateSegment::new();
@@ -368,8 +441,8 @@ pub mod cpu {
         asm::w_gsbase(core as *mut Cpu as u64);
     }
 
-    pub fn currentid() -> u32 {
-        mycpu().id
+    pub fn id() -> u32 {
+        current().id
     }
 
     pub fn current() -> &'static Cpu {
@@ -381,7 +454,7 @@ pub mod cpu {
         }
     }
 
-    pub fn current_mut() -> &'static Cpu {
+    pub fn current_mut() -> &'static mut Cpu {
         unsafe {
             use core::mem::transmute;
             let base: u64;
@@ -389,4 +462,22 @@ pub mod cpu {
             transmute::<u64, &mut Cpu>(base)
         }
     }
+}
+
+#[inline]
+pub fn without_interrupts<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    // if interrupts are disabled, disable them now
+    unsafe { cpu::push_interrupt_off(); }
+
+    // do `f` while interrupts are disabled
+    let ret = f();
+
+    // re-enable interrupts if they were previously enabled
+    unsafe { cpu::pop_interrupt_off(); }
+
+    // return the result of `f` to the caller
+    ret
 }

@@ -1,24 +1,18 @@
 #![no_std]
 
 mod arch;
+mod console;
 mod param;
+mod spinlock;
 
 use crate::arch::paging::Page;
 
-static mut PERCORE0: Page = Page::empty();
+static mut PERCPU0: Page = Page::empty();
 
-/// Entry point for Lithium kernel.
-///
-/// # Safety
-///
-/// This function represents the entry point for the kernel. It is marked as `unsafe`
-/// because it is typically called during the kernel initialization, and the caller
-/// is responsible for ensuring that the kernel is in a valid state before invoking
-/// this function.
-///
 #[no_mangle]
 pub unsafe extern "C" fn kernel_main() -> ! {
-    arch::cpu::init(&mut PERCORE0, 0);
+    arch::cpu::init(&mut PERCPU0, 0);       // initialize per-cpu kernel structures
+    console::init();                                 // initialize uart serial driver
 
     loop {}
 }
