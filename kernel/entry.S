@@ -1,7 +1,3 @@
-;;
-;;  entry.S - Multiboot header and kernel entry point.
-;;
-
 global  _start
 global  _start64
 global  bootpgtbl
@@ -10,6 +6,7 @@ extern  kernel_main
 
 KERNBASE        equ 0xffff800000000000
 PAGESIZE        equ 4096
+STACKSIZE       equ PAGESIZE*4
 
 MAGIC           equ 0x1BADB002
 MBALIGN         equ 1 << 0
@@ -52,13 +49,12 @@ align 4
 
 bits 32
 _start:
-    cli
-
     ; Setup initial stack.
-    mov     esp, stack0 - KERNBASE + PAGESIZE
+    mov     esp, stack0 - KERNBASE + STACKSIZE
 
     ; Setup identity paging before entering long mode.
     ; We identity map the first 512 2MiB pages into the page table.
+    ; We also map the first 512 2MiB pages starting from 0xffff800000000000.
     mov     eax, bootpgtbl - KERNBASE
     mov     cr3, eax
 
@@ -78,8 +74,8 @@ _start:
     or      eax, CR0_BOOT
     mov     cr0, eax
 
-    ; Load GDT descriptor for long mode.
-    lgdt    [bootgdt.desc - KERNBASE]
+    ; Load GDT pointer for long mode.
+    lgdt    [bootgdt.ptr - KERNBASE]
 
     ; Jump into long mode code!
     jmp     0x8:(_start64 - KERNBASE)
@@ -98,9 +94,9 @@ _start64:
     mov     gs, ax
 
     ; Setup the 64-bit stack register.
-    mov     rsp, stack0 + PAGESIZE
+    mov     rsp, stack0 + STACKSIZE
 
-    ; Return to label to properly setup GDB stack info.
+    ; Set rip to be the address of higher half kernel.
     mov     rax, qword .1
     push    qword rax
     ret
@@ -148,10 +144,10 @@ align 16
 bootgdt:
     dq      0   ; zero entry
     dq      SEG_ALWAYS1 | SEG_CODE | SEG_READ | SEG_LONG | SEG_PRESENT    ; long mode code segment
-.desc:
+.ptr:
     dw      ($)-bootgdt-1
     dq      (bootgdt-KERNBASE)
 
 section .bss
 align PAGESIZE
-stack0: resb PAGESIZE
+stack0: resb STACKSIZE

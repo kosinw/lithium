@@ -7,12 +7,15 @@ PROFILE ?= dev
 PROFILE_DIR ?= debug
 
 # Target architecture and toolchain.
-ARCH := x86_64
+QEMU := qemu-system-x86_64
+
+ARCH := x86_64-elf
 AS := nasm
-CC := $(ARCH)-elf-gcc
+CC := $(ARCH)-gcc
 CARGO := cargo
-OBJCOPY := $(ARCH)-elf-objcopy
-QEMU := qemu-system-$(ARCH)
+OBJCOPY := $(ARCH)-objcopy
+OBJDUMP := $(ARCH)-objdump
+
 
 # Use "find" to glob all *.S, *.rs, and *.ld files in the tree and obtain the
 # object and header dependency file names.
@@ -23,7 +26,7 @@ OBJFILES := $(addprefix target/obj/, $(ASMFILES:.S=.S.o))
 HEADER_DEPS := $(addprefix target/obj/,$(ASMFILES:.S=.S.d))
 
 # Options for running the QEMU emulator.
-QEMUOPTS := -cpu qemu64,fsgsbase -m 512 -M q35
+QEMUOPTS := -serial mon:stdio -nographic -cpu qemu64,fsgsbase -m 1G -M microvm
 
 # Default target.
 .PHONY: all
@@ -40,12 +43,14 @@ qemu-gdb: $(KERNEL)
 .PHONY: kernel
 kernel: $(KERNEL)
 
-$(KERNEL): target/obj/kernel.a $(OBJFILES) $(LINKERFILE)
-	$(CC) -z noexecstack -ffreestanding -O2 -nostdlib -T $(LINKERFILE) -o target/obj/kernel.elf $(OBJFILES) target/obj/kernel.a
+$(KERNEL): target/obj/kernel.o $(OBJFILES) $(LINKERFILE)
+	$(CC) -z noexecstack -ffreestanding -O2 -nostdlib -T $(LINKERFILE) -o target/obj/kernel.elf $(OBJFILES) target/obj/kernel.o
+	$(OBJDUMP) -M intel -S target/obj/kernel.elf > target/kernel.S
+	$(OBJDUMP) -t target/obj/kernel.elf | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > target/kernel.sym
 	$(OBJCOPY) --input-target=elf64-x86-64 --output-target=elf32-i386 target/obj/kernel.elf $@
 
-# Compilation rules for kernel.a
-target/obj/kernel.a: $(RUSTFILES) Makefile
+# Compilation rules for kernel.o
+target/obj/kernel.o: $(RUSTFILES) Makefile
 	mkdir -p "$$(dirname $@)"
 	$(CARGO) build \
 	--profile $(PROFILE) \
