@@ -28,7 +28,7 @@ impl Spinlock {
             cpu::push_interrupt_off();
             let cpu = Some(cpu::id());
             assert!(!self.holding(), "acquire(): nested lock {} on cpu {cpu:?}", self.name);
-            while asm::xswap(&mut self.locked, 1) != 0 {
+            while asm::xchg(&mut self.locked, 1) != 0 {
                 asm::pause();
             }
             self.cpu = Some(cpu::id());
@@ -39,14 +39,14 @@ impl Spinlock {
         unsafe {
             assert!(self.holding(), "release(): unlocking unheld lock {}", self.name);
             self.cpu = None;
-            asm::xswap(&mut self.locked, 0);
+            asm::xchg(&mut self.locked, 0);
             cpu::pop_interrupt_off();
         }
     }
 
     pub fn holding(&self) -> bool {
         without_interrupts(|| {
-            self.locked == 1 && self.cpu.is_some_and(|x| x == cpu::id())
+            self.locked != 0 && self.cpu.is_some_and(|x| x == cpu::id())
         })
     }
 }
@@ -68,17 +68,35 @@ impl<T> SpinMutex<T> {
         }
     }
 
-    pub fn lock(&mut self) -> MutexGuard<T> {
+    pub fn acquire(&self) {
         unsafe { &mut *self.lock.get() }.acquire();
+    }
 
+    pub fn release(&self) {
+        unsafe { &mut *self.lock.get() }.release();
+    }
+
+    pub fn lock(&self) -> MutexGuard<T> {
+        self.acquire();
         MutexGuard {
             lock: &self.lock,
             data: unsafe { &mut *self.data.get() }
         }
     }
 
-    pub fn is_locked(&self) -> bool {
-        unsafe { &*self.lock.get() }.holding()
+    pub fn lock_ref(&self) -> &Spinlock {
+        unsafe { &*self.lock.get() }
+    }
+
+    pub fn holding(&self) -> bool {
+        self.lock_ref().holding()
+    }
+
+    pub fn with_lock<U, F: FnMut(&mut T) -> U>(&self, mut thunk: F) -> U {
+        self.acquire();
+        let r = thunk(unsafe { &mut *self.data.get() });
+        self.release();
+        r
     }
 }
 

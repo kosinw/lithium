@@ -30,7 +30,7 @@ pub mod asm {
 
     pub unsafe fn r_flags() -> RFlags {
         let raw: u64;
-        asm!("pushfq; popq {}", out(reg) raw, options(preserves_flags));
+        asm!("pushfq; pop {}", out(reg) raw, options(preserves_flags));
         RFlags::from_bits_truncate(raw)
     }
 
@@ -69,12 +69,9 @@ pub mod asm {
         (u64::from(hi) << 2) | u64::from(lo)
     }
 
+    // TODO(kosinw): Fix me and actually properly get TSC frequency
     pub unsafe fn r_tschz() -> u64 {
-        const TSC_INV_MULTIPLIER: u64 = 133_330_000;
-        /// 133.33 MHz
-        const MSR_PLATFORM_INFO: u32 = 0x206;
-        let platform_info = unsafe { r_msr(MSR_PLATFORM_INFO) };
-        ((platform_info >> 8) & 0xFF) * TSC_INV_MULTIPLIER
+        2_000_000_000
     }
 
     pub unsafe fn r_tsc() -> u128 {
@@ -108,9 +105,19 @@ pub mod asm {
         asm!("lgdt [{}]", in (reg) gdt, options(preserves_flags));
     }
 
-    pub unsafe fn xswap(word: &mut u64, mut value: u64) -> u64 {
-        asm!("lock; xchg {0}, {1}", inout(reg) value, in(reg) word);
+    pub unsafe fn xchg(word: &mut u64, mut value: u64) -> u64 {
+        asm!("lock xchg [{0}], {1}", in(reg) word, inout(reg) value, options(nostack));
         value
+    }
+
+    pub unsafe fn outb(port: u16, data: u8) {
+        asm!("out dx, al", in("dx") port, in("al") data);
+    }
+
+    pub unsafe fn inb(port: u16) -> u8 {
+        let r: u8;
+        asm!("in al, dx", out("al") r, in("dx") port);
+        r
     }
 }
 
@@ -406,7 +413,7 @@ pub mod cpu {
     }
 
     pub unsafe fn init(page: &mut Page, id: u32) {
-        let core = &mut *(page.as_ptr_mut() as *mut Cpu);
+        let cpu = &mut *(page.as_ptr_mut() as *mut Cpu);
         let mut tss = TaskStateSegment::new();
         let mut gdt = GlobalDescriptorTable::new();
 
@@ -423,8 +430,8 @@ pub mod cpu {
         gdt.add_entry(SegmentDescriptor::user_data_segment());
         let ts = gdt.add_entry(SegmentDescriptor::tss_segment(&tss));
 
-        *core = Cpu {
-            self_ptr: core,
+        *cpu = Cpu {
+            self_ptr: cpu,
             clock_freq: asm::r_tschz(),
             noff: 0,
             intena: false,
@@ -438,7 +445,7 @@ pub mod cpu {
         asm::w_codeseg(&cs);
         asm::w_dataseg(&ds);
         asm::ltr(&ts);
-        asm::w_gsbase(core as *mut Cpu as u64);
+        asm::w_gsbase(cpu as *mut Cpu as u64);
     }
 
     pub fn id() -> u32 {
@@ -449,7 +456,7 @@ pub mod cpu {
         unsafe {
             use core::mem::transmute;
             let base: u64;
-            asm!("mov gs:0, {o}", o = out(reg) base, options(preserves_flags));
+            asm!("mov {o}, gs:0", o = out(reg) base, options(preserves_flags));
             transmute::<u64, &Cpu>(base)
         }
     }
@@ -458,7 +465,7 @@ pub mod cpu {
         unsafe {
             use core::mem::transmute;
             let base: u64;
-            asm!("mov gs:0, {o}", o = out(reg) base, options(preserves_flags));
+            asm!("mov {o}, gs:0", o = out(reg) base, options(preserves_flags));
             transmute::<u64, &mut Cpu>(base)
         }
     }
