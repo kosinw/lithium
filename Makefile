@@ -63,7 +63,7 @@ clippy:
 # Check for errors.
 .PHONY: fix
 fix:
-	$(CARGO) clippy --fix \
+	$(CARGO) check --fix \
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \
 	-Z build-std=alloc,core,compiler_builtins \

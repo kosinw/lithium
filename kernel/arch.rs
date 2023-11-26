@@ -426,7 +426,7 @@ pub mod paging {
         }
 
         pub const fn size(&self) -> u64 {
-            return PAGESIZE as u64;
+            PAGESIZE as u64
         }
 
         pub fn next_frame(&self) -> Frame {
@@ -599,8 +599,8 @@ pub mod cpu {
         // Setup task state segment for a double fault handler stack.
         tss.interrupt_stack_table[0] = {
             let stack_start = page.as_ptr() as u64;
-            let stack_end = stack_start + 4096;
-            stack_end
+            
+            stack_start + 4096
         };
 
         let cs = gdt.add_entry(SegmentDescriptor::kernel_code_segment());

@@ -46,7 +46,6 @@ pub mod framealloc {
         fn choose_next_area(&mut self) {
             self.current_area = self
                 .areas
-                .clone()
                 .filter(|area| matches!(area.area_type, MemoryAreaType::Available))
                 .filter(|area| {
                     let address = area.end_address();
@@ -67,7 +66,7 @@ pub mod framealloc {
         fn allocate_frame(&mut self) -> Option<Frame> {
             if let Some(area) = self.current_area {
                 // Clone the next free frame to return.
-                let frame = self.next_free_frame.clone();
+                let frame = self.next_free_frame;
 
                 // Get the last frame of the current area.
                 let current_area_last_frame = {
@@ -81,7 +80,7 @@ pub mod framealloc {
                 } else if frame >= self.kernel_start && frame < self.kernel_end {
                     // Frame is being used by kernel, skip it for next frame.
                     // Kernel must be page aligned so this should get the next frame.
-                    self.next_free_frame = self.kernel_end.clone();
+                    self.next_free_frame = self.kernel_end;
                 } else if frame >= self.multiboot_start && frame < self.multiboot_end {
                     // Frame is being used by the multiboot info structure.
                     // Multiboot is not necessarily page aligned so this should skip to the next frame.
@@ -99,7 +98,7 @@ pub mod framealloc {
             }
         }
 
-        fn deallocate_frame(&mut self, frame: Frame) {
+        fn deallocate_frame(&mut self, _frame: Frame) {
             todo!()
         }
     }
@@ -178,7 +177,7 @@ pub mod framealloc {
         );
 
         for i in 0.. {
-            if let None = allocator.allocate_frame() {
+            if allocator.allocate_frame().is_none() {
                 log!("allocated {} frames", i);
                 break;
             }
