@@ -177,13 +177,11 @@ pub mod framealloc {
             mbi.memory_areas(),
         );
 
-        // for i in 0.. {
-        //     if let None = allocator.allocate_frame() {
-        //         log!("allocated {} frames", i);
-        //         break;
-        //     }
-        // }
-
-        let frame = allocator.allocate_frame();
+        for i in 0.. {
+            if let None = allocator.allocate_frame() {
+                log!("allocated {} frames", i);
+                break;
+            }
+        }
     }
 }

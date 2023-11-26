@@ -348,44 +348,38 @@ pub mod segmentation {
 }
 
 pub mod paging {
+    use bitflags::bitflags;
     use core::fmt;
+    use core::ops::{Index, IndexMut};
 
     pub const PAGESIZE: usize = 4096;
 
+    /// Implementation of a page that is statically allocated in kernel memory.
+    /// Only use this structure as a global variable in kernel space.
     #[derive(Debug, Clone, Copy)]
     #[repr(C, align(4096))]
-    pub struct Page([u8; PAGESIZE]);
+    pub struct KernelPage([u8; PAGESIZE]);
 
-    impl Page {
-        pub const fn empty() -> Page {
-            Page([0; PAGESIZE])
+    impl KernelPage {
+        pub const fn empty() -> KernelPage {
+            KernelPage([0; PAGESIZE])
         }
 
-        pub fn as_ptr_mut(&mut self) -> *mut Page {
-            self as *mut Page
+        pub fn as_ptr_mut(&mut self) -> *mut KernelPage {
+            self as *mut KernelPage
         }
 
-        pub fn as_ptr(&self) -> *const Page {
-            self as *const Page
+        pub fn as_ptr(&self) -> *const KernelPage {
+            self as *const KernelPage
         }
     }
 
-    /// Align address downwards.
-    ///
-    /// Returns the greatest `x` with alignment `align` so that `x <= addr`.
-    ///
-    /// Panics if the alignment is not a power of two.
     #[inline]
     pub const fn align_down(addr: u64, align: u64) -> u64 {
         assert!(align.is_power_of_two(), "`align` must be a power of two");
         addr & !(align - 1)
     }
 
-    /// Align address upwards.
-    ///
-    /// Returns the smallest `x` with alignment `align` so that `x >= addr`.
-    ///
-    /// Panics if the alignment is not a power of two or if an overflow occurs.
     #[inline]
     pub const fn align_up(addr: u64, align: u64) -> u64 {
         assert!(align.is_power_of_two(), "`align` must be a power of two");
@@ -402,6 +396,11 @@ pub mod paging {
         }
     }
 
+    #[inline]
+    pub const fn is_aligned(addr: u64, alignment: u64) -> bool {
+        align_down(addr, alignment) == addr
+    }
+
     /// A 4KiB physical memory frame.
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     #[repr(C)]
@@ -411,11 +410,7 @@ pub mod paging {
 
     impl fmt::Debug for Frame {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_fmt(format_args!(
-                "Frame[{}]({:#x})",
-                "4KiB",
-                self.start_address
-            ))
+            f.write_fmt(format_args!("Frame[{}]({:#x})", "4KiB", self.start_address))
         }
     }
 
@@ -431,7 +426,7 @@ pub mod paging {
         }
 
         pub const fn size(&self) -> u64 {
-            return PAGESIZE
+            return PAGESIZE as u64;
         }
 
         pub fn next_frame(&self) -> Frame {
@@ -440,11 +435,120 @@ pub mod paging {
             }
         }
     }
+
+    #[repr(transparent)]
+    #[derive(Copy, Clone)]
+    pub struct PageTableEntry {
+        entry: u64,
+    }
+
+    impl PageTableEntry {
+        #[inline]
+        pub const fn new() -> Self {
+            Self { entry: 0 }
+        }
+
+        #[inline]
+        pub fn is_unused(&self) -> bool {
+            self.entry == 0
+        }
+
+        #[inline]
+        pub fn set_unused(&mut self) {
+            self.entry = 0;
+        }
+
+        #[inline]
+        pub fn flags(&self) -> PageTableFlags {
+            PageTableFlags::from_bits_truncate(self.entry)
+        }
+
+        #[inline]
+        pub fn addr(&self) -> u64 {
+            self.entry & 0x000f_ffff_ffff_f000
+        }
+
+        #[inline]
+        pub fn set_frame(&mut self, frame: Frame, flags: PageTableFlags) {
+            assert!(
+                !flags.contains(PageTableFlags::HUGE_PAGE),
+                "cannot point huge page to a physical frame {:?}",
+                frame
+            );
+            self.set_addr(frame.start_address(), flags);
+        }
+
+        #[inline]
+        pub fn set_addr(&mut self, addr: u64, flags: PageTableFlags) {
+            assert!(
+                is_aligned(addr, PAGESIZE as u64),
+                "cannot set non-aligned address {}",
+                addr
+            );
+            self.entry = addr | flags.bits();
+        }
+    }
+
+    impl fmt::Debug for PageTableEntry {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            let mut f = f.debug_struct("PageTableEntry");
+            f.field("addr", &self.addr());
+            f.field("flags", &self.flags());
+            f.finish()
+        }
+    }
+
+    bitflags! {
+        /// Possible flags for a page table entry.
+        #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
+        pub struct PageTableFlags: u64 {
+            const PRESENT =         1 << 0;
+            const WRITABLE =        1 << 1;
+            const USER_ACCESSIBLE = 1 << 2;
+            const WRITE_THROUGH =   1 << 3;
+            const NO_CACHE =        1 << 4;
+            const ACCESSED =        1 << 5;
+            const DIRTY =           1 << 6;
+            const HUGE_PAGE =       1 << 7;
+            const GLOBAL =          1 << 8;
+            const NO_EXECUTE =      1 << 63;
+        }
+    }
+
+    #[repr(C, align(4096))]
+    #[derive(Clone)]
+    pub struct PageTable {
+        entries: [PageTableEntry; 512],
+    }
+
+    impl PageTable {
+        #[inline]
+        pub const fn new() -> Self {
+            const EMPTY: PageTableEntry = PageTableEntry::new();
+            PageTable {
+                entries: [EMPTY; 512],
+            }
+        }
+    }
+
+    impl Index<usize> for PageTable {
+        type Output = PageTableEntry;
+
+        fn index(&self, index: usize) -> &Self::Output {
+            &self.entries[index]
+        }
+    }
+
+    impl IndexMut<usize> for PageTable {
+        fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+            &mut self.entries[index]
+        }
+    }
 }
 
 pub mod cpu {
     use super::asm::{self, is_interrupt_enabled};
-    use super::paging::Page;
+    use super::paging::KernelPage;
     use super::segmentation::{GlobalDescriptorTable, SegmentDescriptor, TaskStateSegment};
     use core::arch::asm;
 
@@ -487,7 +591,7 @@ pub mod cpu {
         }
     }
 
-    pub unsafe fn init(page: &mut Page, id: u32) {
+    pub unsafe fn init(page: &mut KernelPage, id: u32) {
         let cpu = &mut *(page.as_ptr_mut() as *mut Cpu);
         let mut tss = TaskStateSegment::new();
         let mut gdt = GlobalDescriptorTable::new();

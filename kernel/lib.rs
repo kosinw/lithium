@@ -7,10 +7,10 @@ mod memory;
 mod multiboot;
 mod spinlock;
 
-use crate::arch::paging::Page;
+use crate::arch::paging::KernelPage;
 use crate::multiboot::MultibootInfo;
 
-static mut PERCPU0: Page = Page::empty();
+static mut PERCPU0: KernelPage = KernelPage::empty();
 
 #[no_mangle]
 pub unsafe extern "C" fn kernel_main(mbi_ptr: *const MultibootInfo) {

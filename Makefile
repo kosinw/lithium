@@ -15,10 +15,10 @@ endif
 
 # Target architecture and toolchain.
 QEMU := qemu-system-x86_64
-
 ARCH := x86_64-elf
 AS := nasm
 CC := $(ARCH)-gcc
+GDB := $(ARCH)-gdb
 CARGO := cargo
 OBJCOPY := $(ARCH)-objcopy
 OBJDUMP := $(ARCH)-objdump
@@ -35,6 +35,7 @@ HEADER_DEPS := $(addprefix target/obj/,$(ASMFILES:.S=.S.d))
 # Options for running the QEMU emulator.
 QEMUOPTS := -M microvm -no-reboot -serial mon:stdio
 QEMUOPTS += -nographic -cpu qemu64,fsgsbase,msr -m 512M
+QEMUOPTS += -d int
 
 # Default target.
 .PHONY: all
@@ -46,6 +47,18 @@ qemu: $(KERNEL)
 
 qemu-gdb: $(KERNEL)
 	$(QEMU) -S -s $(QEMUOPTS) -kernel $(KERNEL)
+
+gdb:
+	$(GDB) -x cfg/.gdbinit
+
+# Check for errors.
+.PHONY: clippy
+clippy:
+	$(CARGO) clippy \
+	--profile $(PROFILE) \
+	-Z build-std-features=compiler-builtins-mem \
+	-Z build-std=alloc,core,compiler_builtins \
+	--target cfg/lithium.json
 
 # Build the kernel.
 .PHONY: kernel
