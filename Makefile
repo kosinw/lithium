@@ -60,6 +60,15 @@ clippy:
 	-Z build-std=alloc,core,compiler_builtins \
 	--target cfg/lithium.json
 
+# Check for errors.
+.PHONY: fix
+fix:
+	$(CARGO) clippy --fix \
+	--profile $(PROFILE) \
+	-Z build-std-features=compiler-builtins-mem \
+	-Z build-std=alloc,core,compiler_builtins \
+	--target cfg/lithium.json
+
 # Build the kernel.
 .PHONY: kernel
 kernel: $(KERNEL)
