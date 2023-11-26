@@ -2,7 +2,7 @@
 
 use crate::spinlock::SpinMutex;
 
-mod uart {
+pub(crate) mod uart {
     use core::fmt::Write;
 
     use crate::{
@@ -36,7 +36,7 @@ mod uart {
     }
 
     #[derive(Debug, Copy, Clone)]
-    pub struct Device(u16);
+    pub struct SerialPort(u16);
 
     pub const COM1: u16 = 0x3F8;
 
@@ -47,21 +47,26 @@ mod uart {
     const BACKSPACE: u8 = ctrl(b'H');
     const DELETE: u8 = 0x7F;
 
-    static mut DEVICE: SpinMutex<Device> = SpinMutex::new("uart", Device::new(COM1));
+    static mut UART: SpinMutex<SerialPort> = SpinMutex::new("uart", SerialPort::new(COM1));
 
     pub fn init() {
         unsafe {
-            DEVICE.lock().init();
+            UART.lock().init();
         }
     }
 
     pub fn print(args: core::fmt::Arguments) {
         unsafe {
-            DEVICE.lock().write_fmt(args).unwrap();
+            UART.lock().write_fmt(args).unwrap();
         }
     }
 
-    impl Device {
+    // do not acquire lock in case panic was caused by locking issues
+    pub fn panic_print(args: core::fmt::Arguments) {
+        SerialPort::new(COM1).write_fmt(args).unwrap()
+    }
+
+    impl SerialPort {
         fn port_base(&self) -> u16 {
             self.0
         }
@@ -160,7 +165,7 @@ mod uart {
         }
     }
 
-    impl core::fmt::Write for Device {
+    impl core::fmt::Write for SerialPort {
         fn write_str(&mut self, s: &str) -> core::fmt::Result {
             for byte in s.bytes() {
                 self.send(byte);
@@ -196,6 +201,14 @@ pub fn print(args: core::fmt::Arguments) {
 }
 
 #[macro_export]
+macro_rules! panicf {
+    ($($args:tt)*) => ({
+        use $crate::console::uart::panic_print;
+        panic_print(format_args!($($args)*));
+    })
+}
+
+#[macro_export]
 macro_rules! print {
     ($($args:tt)*) => ({
         use $crate::console::print;
@@ -210,16 +223,24 @@ macro_rules! println {
 }
 
 #[macro_export]
-macro_rules! kernel_println {
+macro_rules! log {
     ($($arg:tt)*) => ({
         unsafe {
             use $crate::arch::asm;
+            use $crate::arch::cpu;
             const ANSI_FOREGROUND_YELLOW: &str = "\x1b[33m";
             const ANSI_CLEAR: &str = "\x1b[0m";
+            const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";
+            let id = cpu::id();
             let tsc = asm::r_tsc();
             let freq = asm::r_tschz();
             let timestamp = tsc as f64 / freq as f64;
-            $crate::println!("{ANSI_FOREGROUND_YELLOW}[{timestamp: >13}]{ANSI_CLEAR} {}", format_args!($($arg)*));
+            let this_file = file!();
+            $crate::print!("{ANSI_FOREGROUND_YELLOW}[{timestamp: >13.6}]{ANSI_CLEAR} ");
+            $crate::print!("{ANSI_FOREGROUND_CYAN}");
+            $crate::print!("{this_file:<22.22}");
+            $crate::print!("{ANSI_CLEAR}");
+            $crate::println!("cpu{id}: {}", format_args!($($arg)*));
         }
     })
 }

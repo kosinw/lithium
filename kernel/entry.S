@@ -6,7 +6,7 @@ extern  kernel_main
 
 KERNBASE        equ 0xffff800000000000
 PAGESIZE        equ 4096
-STACKSIZE       equ PAGESIZE
+STACKSIZE       equ PAGESIZE*10
 
 MAGIC           equ 0x1BADB002
 MBALIGN         equ 1 << 0
@@ -106,7 +106,6 @@ _start64:
     mov     rdi, rbx
 
     ; Set up base pointer register.
-    push    qword 0
     mov     rbp, rsp
 
     ; Call kernel_main in Rust code.

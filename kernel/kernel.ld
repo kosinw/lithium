@@ -7,6 +7,7 @@ SECTIONS
     PROVIDE(KERNBASE = .);
 
     . = 0xffff800000100000;
+    PROVIDE(KERNSTART = .);
     .text BLOCK(4096) : ALIGN(4096)
     {
         KEEP(*(.text.boot))
@@ -14,6 +15,7 @@ SECTIONS
         . = ALIGN(4096);
         *(.trap)
     }
+    PROVIDE(TEXTEND = .);
 
     .rodata  BLOCK(4096) : ALIGN(4096)
     {
@@ -30,6 +32,8 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     }
+
+    . = ALIGN(4096);
 
     PROVIDE(KERNSTOP = .);
 

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 pub mod asm {
-    use super::segment::{DescriptorTablePointer, SegmentSelector};
+    use super::segmentation::{DescriptorTablePointer, SegmentSelector};
     use bitflags::bitflags;
     use core::arch::asm;
 
@@ -52,6 +52,10 @@ pub mod asm {
 
     pub unsafe fn pause() {
         asm!("pause");
+    }
+
+    pub unsafe fn hlt() {
+        asm!("hlt");
     }
 
     pub unsafe fn is_interrupt_enabled() -> bool {
@@ -121,7 +125,7 @@ pub mod asm {
     }
 }
 
-pub mod segment {
+pub mod segmentation {
     use bit_field::BitField;
     use bitflags::bitflags;
     use core::mem::size_of;
@@ -242,7 +246,7 @@ pub mod segment {
 
     bitflags! {
         /// Flags for a GDT descriptor. Not all flags are valid for all descriptor types.
-        #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy)]
         pub struct SegmentDescriptorFlags: u64 {
             const ACCESSED          = 1 << 40;
             const WRITABLE          = 1 << 41;
@@ -344,15 +348,13 @@ pub mod segment {
 }
 
 pub mod paging {
-    use crate::param::PAGESIZE;
-
     #[derive(Debug, Clone, Copy)]
     #[repr(C, align(4096))]
-    pub struct Page([u8; PAGESIZE]);
+    pub struct Page([u8; 4096]);
 
     impl Page {
         pub const fn empty() -> Page {
-            Page([0; PAGESIZE])
+            Page([0; 4096])
         }
 
         pub fn as_ptr_mut(&mut self) -> *mut Page {
@@ -368,10 +370,8 @@ pub mod paging {
 pub mod cpu {
     use super::asm::{self, is_interrupt_enabled};
     use super::paging::Page;
-    use super::segment::{GlobalDescriptorTable, SegmentDescriptor, TaskStateSegment};
+    use super::segmentation::{GlobalDescriptorTable, SegmentDescriptor, TaskStateSegment};
     use core::arch::asm;
-
-    use crate::param::PAGESIZE;
 
     #[derive(Debug, Clone, Copy)]
     #[repr(C, align(4096))]
@@ -420,7 +420,7 @@ pub mod cpu {
         // Setup task state segment for a double fault handler stack.
         tss.interrupt_stack_table[0] = {
             let stack_start = page.as_ptr() as u64;
-            let stack_end = stack_start + (PAGESIZE as u64);
+            let stack_end = stack_start + 4096;
             stack_end
         };
 

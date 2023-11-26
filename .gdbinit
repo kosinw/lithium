@@ -4,4 +4,4 @@ symbol-file target/obj/kernel.elf
 set disassemble-next-line auto
 set disassembly-flavor intel
 
-gef-remote localhost 1234
+target remote localhost:1234

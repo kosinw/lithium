@@ -26,7 +26,8 @@ OBJFILES := $(addprefix target/obj/, $(ASMFILES:.S=.S.o))
 HEADER_DEPS := $(addprefix target/obj/,$(ASMFILES:.S=.S.d))
 
 # Options for running the QEMU emulator.
-QEMUOPTS := -no-reboot -serial mon:stdio -nographic -cpu qemu64,fsgsbase,msr -m 1G -M microvm
+QEMUOPTS := -M microvm -no-reboot -serial mon:stdio
+QEMUOPTS += -nographic -cpu qemu64,fsgsbase,msr -m 512M
 
 # Default target.
 .PHONY: all
