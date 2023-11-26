@@ -240,7 +240,7 @@ macro_rules! log {
             $crate::print!("{ANSI_FOREGROUND_CYAN}");
             $crate::print!("{this_file:<22.22}");
             $crate::print!("{ANSI_CLEAR}");
-            $crate::println!("cpu{id}: {}", format_args!($($arg)*));
+            $crate::println!("[cpu{id}] {}", format_args!($($arg)*));
         }
     })
 }

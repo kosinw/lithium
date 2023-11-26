@@ -64,7 +64,7 @@ impl MemoryArea {
 
     /// The end address of the memory region.
     pub fn end_address(&self) -> u64 {
-        self.addr + self.len
+        self.addr + self.len - 1
     }
 
     /// The size, in bytes, of the memory region.
@@ -99,16 +99,9 @@ pub struct MultibootInfo {
 }
 
 impl MultibootInfo {
-    /// Return iterator over all marked AVAILABLE memory areas.
-    /// Must check flags to see if MEM_MAP is present otherwise function will panic.
-    pub fn available_memory_areas(&self) -> impl Iterator<Item = &MemoryArea> {
-        self.memory_areas()
-            .filter(|x| matches!(x.area_type, MemoryAreaType::Available))
-    }
-
     /// Return iterator over all memory areas.
     /// Must check flags to see if MEM_MAP is present otherwise function will panic.
-    pub fn memory_areas(&self) -> impl Iterator<Item = &MemoryArea> {
+    pub fn memory_areas(&self) -> MemoryAreaIter {
         MemoryAreaIter {
             current_area: self.mmap_addr,
             last_area: self.mmap_length + self.mmap_addr,
@@ -117,15 +110,15 @@ impl MultibootInfo {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MemoryAreaIter<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct MemoryAreaIter {
     current_area: u32,
     last_area: u32,
-    phantom: PhantomData<&'a MemoryArea>,
+    phantom: PhantomData<&'static MemoryArea>,
 }
 
-impl<'a> Iterator for MemoryAreaIter<'a> {
-    type Item = &'a MemoryArea;
+impl Iterator for MemoryAreaIter {
+    type Item = &'static MemoryArea;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_area >= self.last_area {

@@ -14,23 +14,27 @@ SECTIONS
         *(.text .text.*)
         . = ALIGN(4096);
         *(.trap)
+        . = ALIGN(4096);
     }
     PROVIDE(TEXTEND = .);
 
     .rodata  BLOCK(4096) : ALIGN(4096)
     {
         *(.rodata .rodata.*)
+        . = ALIGN(4096);
     }
 
     .data BLOCK(4096) : ALIGN(4096)
     {
         *(.data .data.*)
+        . = ALIGN(4096);
     }
 
     .bss BLOCK(4096) : ALIGN(4096)
     {
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(4096);
     }
 
     . = ALIGN(4096);

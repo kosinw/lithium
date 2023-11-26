@@ -1,42 +1,108 @@
-pub mod addr {
-    /// Align address downwards.
-    ///
-    /// Returns the greatest `x` with alignment `align` so that `x <= addr`.
-    ///
-    /// Panics if the alignment is not a power of two.
-    #[inline]
-    pub const fn align_down(addr: u64, align: u64) -> u64 {
-        assert!(align.is_power_of_two(), "`align` must be a power of two");
-        addr & !(align - 1)
+pub mod framealloc {
+    use crate::arch::paging::Frame;
+    use crate::log;
+    use crate::multiboot::{InfoFlags, MemoryArea, MemoryAreaIter, MemoryAreaType, MultibootInfo};
+    use core::ffi::CStr;
+    use core::mem::size_of;
+
+    trait FrameAllocator {
+        fn allocate_frame(&mut self) -> Option<Frame>;
+        fn deallocate_frame(&mut self, frame: Frame);
     }
 
-    /// Align address upwards.
-    ///
-    /// Returns the smallest `x` with alignment `align` so that `x >= addr`.
-    ///
-    /// Panics if the alignment is not a power of two or if an overflow occurs.
-    #[inline]
-    pub const fn align_up(addr: u64, align: u64) -> u64 {
-        assert!(align.is_power_of_two(), "`align` must be a power of two");
-        let align_mask = align - 1;
-        if addr & align_mask == 0 {
-            addr // already aligned
-        } else {
-            // FIXME: Replace with .expect, once `Option::expect` is const.
-            if let Some(aligned) = (addr | align_mask).checked_add(1) {
-                aligned
-            } else {
-                panic!("attempt to add with overflow")
+    // TODO(kosinw): Replace this with a better allocator
+    #[derive(Debug, Clone)]
+    struct AreaFrameAllocator {
+        next_free_frame: Frame,
+        current_area: Option<&'static MemoryArea>,
+        areas: MemoryAreaIter,
+        kernel_start: Frame,
+        kernel_end: Frame,
+        multiboot_start: Frame,
+        multiboot_end: Frame,
+    }
+
+    impl AreaFrameAllocator {
+        pub fn new(
+            kernel_start: u64,
+            kernel_end: u64,
+            multiboot_start: u64,
+            multiboot_end: u64,
+            memory_areas: MemoryAreaIter,
+        ) -> AreaFrameAllocator {
+            let mut allocator = AreaFrameAllocator {
+                next_free_frame: Frame::containing_address(0),
+                current_area: None,
+                areas: memory_areas,
+                kernel_start: Frame::containing_address(kernel_start),
+                kernel_end: Frame::containing_address(kernel_end),
+                multiboot_start: Frame::containing_address(multiboot_start),
+                multiboot_end: Frame::containing_address(multiboot_end),
+            };
+            allocator.choose_next_area();
+            allocator
+        }
+
+        fn choose_next_area(&mut self) {
+            self.current_area = self
+                .areas
+                .clone()
+                .filter(|area| matches!(area.area_type, MemoryAreaType::Available))
+                .filter(|area| {
+                    let address = area.end_address();
+                    Frame::containing_address(address) >= self.next_free_frame // choose next frame greater than current next_free_frame
+                })
+                .min_by_key(|area| area.start_address());
+
+            if let Some(area) = self.current_area {
+                let start_frame = Frame::containing_address(area.addr);
+                if self.next_free_frame < start_frame {
+                    self.next_free_frame = start_frame;
+                }
             }
         }
     }
-}
 
-pub mod kalloc {
-    use crate::log;
-    use crate::multiboot::{InfoFlags, MultibootInfo};
-    use core::ffi::CStr;
-    use core::mem::size_of;
+    impl FrameAllocator for AreaFrameAllocator {
+        fn allocate_frame(&mut self) -> Option<Frame> {
+            if let Some(area) = self.current_area {
+                // Clone the next free frame to return.
+                let frame = self.next_free_frame.clone();
+
+                // Get the last frame of the current area.
+                let current_area_last_frame = {
+                    let address = area.addr + area.len - 1;
+                    Frame::containing_address(address)
+                };
+
+                if frame > current_area_last_frame {
+                    // All the frames in the current area are used up, switch to the next one
+                    self.choose_next_area();
+                } else if frame >= self.kernel_start && frame < self.kernel_end {
+                    // Frame is being used by kernel, skip it for next frame.
+                    // Kernel must be page aligned so this should get the next frame.
+                    self.next_free_frame = self.kernel_end.clone();
+                } else if frame >= self.multiboot_start && frame < self.multiboot_end {
+                    // Frame is being used by the multiboot info structure.
+                    // Multiboot is not necessarily page aligned so this should skip to the next frame.
+                    self.next_free_frame = self.multiboot_end.next_frame();
+                } else {
+                    // Frame is unused, just increment;
+                    self.next_free_frame = self.next_free_frame.next_frame();
+                    return Some(frame);
+                }
+
+                // Frame was not in a valid spot so try again
+                self.allocate_frame()
+            } else {
+                None // no frames left
+            }
+        }
+
+        fn deallocate_frame(&mut self, frame: Frame) {
+            todo!()
+        }
+    }
 
     extern "C" {
         static KERNBASE: [u64; 0];
@@ -96,10 +162,28 @@ pub mod kalloc {
             log!(
                 "[{:#016x}-{:#016x}] {:>10.2}M {}",
                 area.start_address(),
-                area.end_address(),
+                area.end_address() + 1,
                 size_mb,
                 { area.area_type }
             );
         }
+
+        // Create allocator finally
+        let mut allocator = AreaFrameAllocator::new(
+            kernel_start,
+            kernel_end,
+            multiboot_start,
+            multiboot_end,
+            mbi.memory_areas(),
+        );
+
+        // for i in 0.. {
+        //     if let None = allocator.allocate_frame() {
+        //         log!("allocated {} frames", i);
+        //         break;
+        //     }
+        // }
+
+        let frame = allocator.allocate_frame();
     }
 }

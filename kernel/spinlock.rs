@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::arch::{asm, cpu, without_interrupts};
 use core::option::Option;
 use core::cell::UnsafeCell;

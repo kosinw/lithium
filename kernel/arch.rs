@@ -101,7 +101,7 @@ pub mod asm {
         asm!("mov ds, {0:x}", in(reg) selector.0, options(preserves_flags));
     }
 
-    pub unsafe fn ltr(selector: &SegmentSelector) {
+    pub unsafe fn w_taskseg(selector: &SegmentSelector) {
         asm!("ltr {0:x}", in(reg) selector.0, options(preserves_flags));
     }
 
@@ -348,13 +348,17 @@ pub mod segmentation {
 }
 
 pub mod paging {
+    use core::fmt;
+
+    pub const PAGESIZE: usize = 4096;
+
     #[derive(Debug, Clone, Copy)]
     #[repr(C, align(4096))]
-    pub struct Page([u8; 4096]);
+    pub struct Page([u8; PAGESIZE]);
 
     impl Page {
         pub const fn empty() -> Page {
-            Page([0; 4096])
+            Page([0; PAGESIZE])
         }
 
         pub fn as_ptr_mut(&mut self) -> *mut Page {
@@ -363,6 +367,77 @@ pub mod paging {
 
         pub fn as_ptr(&self) -> *const Page {
             self as *const Page
+        }
+    }
+
+    /// Align address downwards.
+    ///
+    /// Returns the greatest `x` with alignment `align` so that `x <= addr`.
+    ///
+    /// Panics if the alignment is not a power of two.
+    #[inline]
+    pub const fn align_down(addr: u64, align: u64) -> u64 {
+        assert!(align.is_power_of_two(), "`align` must be a power of two");
+        addr & !(align - 1)
+    }
+
+    /// Align address upwards.
+    ///
+    /// Returns the smallest `x` with alignment `align` so that `x >= addr`.
+    ///
+    /// Panics if the alignment is not a power of two or if an overflow occurs.
+    #[inline]
+    pub const fn align_up(addr: u64, align: u64) -> u64 {
+        assert!(align.is_power_of_two(), "`align` must be a power of two");
+        let align_mask = align - 1;
+        if addr & align_mask == 0 {
+            addr // already aligned
+        } else {
+            // FIXME: Replace with .expect, once `Option::expect` is const.
+            if let Some(aligned) = (addr | align_mask).checked_add(1) {
+                aligned
+            } else {
+                panic!("attempt to add with overflow")
+            }
+        }
+    }
+
+    /// A 4KiB physical memory frame.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[repr(C)]
+    pub struct Frame {
+        start_address: u64,
+    }
+
+    impl fmt::Debug for Frame {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_fmt(format_args!(
+                "Frame[{}]({:#x})",
+                "4KiB",
+                self.start_address
+            ))
+        }
+    }
+
+    impl Frame {
+        pub fn containing_address(address: u64) -> Frame {
+            Frame {
+                start_address: align_down(address, PAGESIZE as u64),
+            }
+        }
+
+        pub const fn start_address(&self) -> u64 {
+            self.start_address
+        }
+
+        pub const fn size(&self) -> u64 {
+            return PAGESIZE
+        }
+
+        pub fn next_frame(&self) -> Frame {
+            Frame {
+                start_address: align_down(self.start_address + PAGESIZE as u64, PAGESIZE as u64),
+            }
         }
     }
 }
@@ -444,7 +519,7 @@ pub mod cpu {
 
         asm::w_codeseg(&cs);
         asm::w_dataseg(&ds);
-        asm::ltr(&ts);
+        asm::w_taskseg(&ts);
         asm::w_gsbase(cpu as *mut Cpu as u64);
     }
 
@@ -477,13 +552,17 @@ where
     F: FnOnce() -> R,
 {
     // if interrupts are disabled, disable them now
-    unsafe { cpu::push_interrupt_off(); }
+    unsafe {
+        cpu::push_interrupt_off();
+    }
 
     // do `f` while interrupts are disabled
     let ret = f();
 
     // re-enable interrupts if they were previously enabled
-    unsafe { cpu::pop_interrupt_off(); }
+    unsafe {
+        cpu::pop_interrupt_off();
+    }
 
     // return the result of `f` to the caller
     ret

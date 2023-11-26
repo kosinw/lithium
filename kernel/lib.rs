@@ -19,7 +19,7 @@ pub unsafe extern "C" fn kernel_main(mbi_ptr: *const MultibootInfo) {
     print!("\x1bc"); // clears the screen
     println!("lithium kernel is booting...\n");
     log!("OK!");
-    memory::kalloc::init(mbi_ptr); // physical page allocator
+    memory::framealloc::init(mbi_ptr); // physical frame allocator
 }
 
 mod runtime {
