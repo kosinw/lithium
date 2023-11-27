@@ -1,6 +1,8 @@
 global  _start
 global  _start64
 global  bootpgtbl
+global  stack0
+global  STACKSIZE
 
 extern  kernel_main
 

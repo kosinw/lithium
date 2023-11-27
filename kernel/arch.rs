@@ -118,6 +118,10 @@ pub mod asm {
         asm!("out dx, al", in("dx") port, in("al") data);
     }
 
+    pub unsafe fn outw(port: u16, data: u16) {
+        asm!("out dx, ax", in("dx") port, in("ax") data);
+    }
+
     pub unsafe fn inb(port: u16) -> u8 {
         let r: u8;
         asm!("in al, dx", out("al") r, in("dx") port);

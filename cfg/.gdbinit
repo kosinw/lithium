@@ -5,3 +5,6 @@ set disassemble-next-line auto
 set disassembly-flavor intel
 
 target remote localhost:1234
+
+br memory.rs:177
+c

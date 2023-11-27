@@ -125,8 +125,14 @@ impl Iterator for MemoryAreaIter {
             None
         } else {
             let area = unsafe { &*(self.current_area as *const MemoryArea) };
-            self.current_area += (area.size as usize + size_of::<u32>()) as u32;
-            Some(area)
+            let next_area = (area.size as usize + size_of::<u32>()) as u32;
+            if next_area <= self.last_area {
+                self.current_area = next_area;
+                Some(area)
+            } else {
+                self.current_area = self.last_area;
+                None
+            }
         }
     }
 }

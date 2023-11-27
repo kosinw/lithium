@@ -194,16 +194,16 @@ pub mod layout {
 
     // Physical memory layout
 
-    // qemu -machine microvm is set up like this
+    // qemu -machine microvm is set up like this,
+    // based on qemu's include/hw/i386/microvm.h
     //
-    // [0x00000000100000-0x000000001d0000]             KERNEL
-    // [0x00000000009500-0x00000000009558]             MULTIBOOT
-    // [0x00000000000000-0x0000000009fc00]       0.62M AVAILABLE
-    // [0x0000000009fc00-0x000000000a0000]       0.00M RESERVED
-    // [0x000000000f0000-0x00000000100000]       0.06M RESERVED
-    // [0x00000000100000-0x0000001ffff000]     511.00M AVAILABLE
-    // [0x0000001ffff000-0x00000020000000]       0.00M RESERVED
-    // [0x000000fffc0000-0x00000100000000]       0.25M RESERVED
+    // [0x00000000000000-0x0000000009fc00] -- AVAILABLE "low" usable RAM
+    // [0x0000000009fc00-0x000000000a0000] -- RESERVED  extended BIOS data area
+    // [0x000000000a0000-0x000000000e0000] -- RESERVED  video memory
+    // [0x000000000e0000-0x00000000100000] -- RESERVED  motherboard BIOS
+    // [0x00000000100000-0x0000001ffff000] -- AVAILABLE "high" usable RAM
+    // [0x0000001ffff000-0x00000020000000] -- RESERVED  memory mapped PCI devices
+    // [0x000000fffc0000-0x00000100000000] -- RESERVED  memory mapped PCI devices
 
     // the kernel uses physical memory starting from 0xffff800000000000
     // KERNBASE -- 0xffff800000000000, start of physical memory
@@ -211,32 +211,25 @@ pub mod layout {
     // TEXTEND -- end of kernel executable section, kernel data, rodata, bss
     // KERNEND -- end of kernel
 
+    // virtio MMIO addresses + interrupts are hard coded like this:
+    // virtio device 1 -- address: 0xfeb00000; irq:
+    // virtio device 2 -- address: 0xfeb00200; irq:
+    // virtio device 3 -- address: 0xfeb00400; irq:
+
     extern "C" {
         pub static KERNBASE: [u64; 0];
         pub static KERNSTART: [u64; 0];
         pub static KERNSTOP: [u64; 0];
         pub static bootpgtbl: PageTable;
+        pub static stack0: [u64; 0];
+        pub static STACKSIZE: usize;
     }
 }
 
 pub mod vm {
-    use crate::arch::paging::PageTable;
     use crate::log;
-    use crate::spinlock::SpinMutex;
 
     pub fn init() {
-        // Get the page table that entry.S set up to allow kernel to boot.
-        let boot_pagetable = unsafe { &super::layout::bootpgtbl };
 
-        // Print out the mappings made by entry.S
-        log!("dumping boot pagetable");
-
-        // for i in 0..512 {
-        //     if !boot_pagetable[i].is_unused() {
-        //         log!("{i}: {:?}", boot_pagetable[i]);
-        //     }
-        // }
-
-        //
     }
 }

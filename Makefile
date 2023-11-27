@@ -33,8 +33,14 @@ OBJFILES := $(addprefix target/obj/, $(ASMFILES:.S=.S.o))
 HEADER_DEPS := $(addprefix target/obj/,$(ASMFILES:.S=.S.d))
 
 # Options for running the QEMU emulator.
-QEMUOPTS := -M microvm -no-reboot -serial mon:stdio
-QEMUOPTS += -nographic -cpu qemu64,fsgsbase,msr -m 512M
+QEMUOPTS := -machine microvm,acpi=off,ioapic2=off
+QEMUOPTS += -no-reboot -nodefaults
+QEMUOPTS += -serial mon:stdio
+QEMUOPTS += -device isa-debug-exit,iobase=0x604,iosize=0x04
+QEMUOPTS += -nographic
+QEMUOPTS += -cpu qemu64,fsgsbase,msr -m 512M
+QEMUOPTS += -netdev user,id=net0,hostfwd=tcp::5555-:5555
+QEMUOPTS += -device virtio-net-device,netdev=net0
 QEMUOPTS += -d int
 
 # Default target.
@@ -77,7 +83,8 @@ $(KERNEL): target/obj/kernel.o $(OBJFILES) $(LINKERFILE)
 	$(CC) -z noexecstack -ffreestanding -O2 -nostdlib -T $(LINKERFILE) -o target/obj/kernel.elf $(OBJFILES) target/obj/kernel.o
 	$(OBJCOPY) --input-target=elf64-x86-64 --output-target=elf32-i386 target/obj/kernel.elf $@
 	$(OBJDUMP) -M intel -S target/obj/kernel.elf > target/kernel.S
-	$(OBJDUMP) -t target/obj/kernel.elf | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > target/kernel.sym
+	$(OBJDUMP) -t target/obj/kernel.elf > target/kernel.sym
+	$(OBJDUMP) -x target/obj/kernel.elf > target/kernel.header
 
 # Compilation rules for kernel.o
 target/obj/kernel.o: $(RUSTFILES) Makefile

@@ -204,7 +204,7 @@ pub fn print(args: core::fmt::Arguments) {
 }
 
 #[macro_export]
-macro_rules! panicf {
+macro_rules! kprint {
     ($($args:tt)*) => ({
         use $crate::console::uart::panic_print;
         panic_print(format_args!($($args)*));
