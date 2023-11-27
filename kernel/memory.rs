@@ -49,6 +49,7 @@ pub mod framealloc {
         fn choose_next_area(&mut self) {
             self.current_area = self
                 .areas
+                .clone()
                 .filter(|area| matches!(area.area_type, MemoryAreaType::Available))
                 .filter(|area| {
                     let address = area.end_address();
@@ -227,9 +228,10 @@ pub mod layout {
 }
 
 pub mod vm {
-    use crate::log;
-
-    pub fn init() {
+    /// Page table that uses fixed offset of KERNBASE for virtual addresses of page table frames.
+    pub struct KernelPageTable {
 
     }
+
+    pub fn init() {}
 }

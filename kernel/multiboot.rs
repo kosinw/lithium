@@ -26,6 +26,7 @@ bitflags! {
 #[repr(u32)]
 #[derive(Clone, Copy, Debug)]
 pub enum MemoryAreaType {
+    Invalid = 0,
     Available = 1,
     Reserved = 2,
     AcpiReclaimable = 3,
@@ -36,6 +37,7 @@ pub enum MemoryAreaType {
 impl fmt::Display for MemoryAreaType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
+            Self::Invalid => "INVALID",
             Self::Available => "AVAILABLE",
             Self::Reserved => "RESERVED",
             Self::AcpiReclaimable => "ACPI_RECLAIMABLE",
@@ -64,7 +66,7 @@ impl MemoryArea {
 
     /// The end address of the memory region.
     pub fn end_address(&self) -> u64 {
-        self.addr + self.len - 1
+        (self.addr + self.len).checked_sub(1).unwrap_or(0)
     }
 
     /// The size, in bytes, of the memory region.
@@ -125,13 +127,11 @@ impl Iterator for MemoryAreaIter {
             None
         } else {
             let area = unsafe { &*(self.current_area as *const MemoryArea) };
-            let next_area = (area.size as usize + size_of::<u32>()) as u32;
-            if next_area <= self.last_area {
-                self.current_area = next_area;
-                Some(area)
-            } else {
-                self.current_area = self.last_area;
+            self.current_area += (area.size as usize + size_of::<u32>()) as u32;
+            if matches!(area.area_type, MemoryAreaType::Invalid) {
                 None
+            } else {
+                Some(area)
             }
         }
     }

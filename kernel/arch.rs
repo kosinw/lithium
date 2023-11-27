@@ -358,6 +358,49 @@ pub mod paging {
 
     pub const PAGESIZE: usize = 4096;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub enum PageTableLevel {
+        One = 1,
+        Two,
+        Three,
+        Four
+    }
+
+    pub trait PageTableIndex {
+        fn p1_index(self) -> usize;
+        fn p2_index(self) -> usize;
+        fn p3_index(self) -> usize;
+        fn p4_index(self) -> usize;
+        fn page_offset(self) -> usize;
+        fn page_table_index(self, level: PageTableLevel) -> usize;
+    }
+
+    impl PageTableIndex for u64 {
+        fn p1_index(self) -> usize {
+            (self >> 12) as u16 as usize
+        }
+
+        fn p2_index(self) -> usize {
+            (self >> 12 >> 9) as u16 as usize
+        }
+
+        fn p3_index(self) -> usize {
+            (self >> 12 >> 9 >> 9) as u16 as usize
+        }
+
+        fn p4_index(self) -> usize {
+            (self >> 12 >> 9 >> 9 >> 9) as u16 as usize
+        }
+
+        fn page_offset(self) -> usize {
+            self as u16 as usize
+        }
+
+        fn page_table_index(self, level: PageTableLevel) -> usize {
+            (self >> 12 >> ((level as u8 - 1) * 9)) as u16 as usize
+        }
+    }
+
     /// Implementation of a page that is statically allocated in kernel memory.
     /// Only use this structure as a global variable in kernel space.
     #[derive(Debug, Clone, Copy)]
@@ -419,6 +462,8 @@ pub mod paging {
     }
 
     impl Frame {
+        pub const SIZE: u64 = PAGESIZE as u64;
+
         pub fn containing_address(address: u64) -> Frame {
             Frame {
                 start_address: align_down(address, PAGESIZE as u64),
@@ -437,6 +482,34 @@ pub mod paging {
             Frame {
                 start_address: align_down(self.start_address + PAGESIZE as u64, PAGESIZE as u64),
             }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Page {
+        start_address: u64,
+    }
+
+    impl Page {
+        pub const SIZE: u64 = PAGESIZE as u64;
+
+        /// Returns the page that contains the given virtual address.
+        #[inline]
+        pub fn containing_address(address: u64) -> Self {
+            Page {
+                start_address: align_down(address, Self::SIZE),
+            }
+        }
+
+        #[inline]
+        pub const fn start_address(&self) -> u64 {
+            self.start_address
+        }
+
+        #[inline]
+        pub const fn size(self) -> u64 {
+            Self::SIZE
         }
     }
 
@@ -541,7 +614,7 @@ pub mod paging {
     }
 
     #[repr(C, align(4096))]
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct PageTable {
         entries: [PageTableEntry; 512],
     }
