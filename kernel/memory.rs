@@ -2,6 +2,7 @@ pub mod framealloc {
     use crate::arch::paging::Frame;
     use crate::log;
     use crate::multiboot::{InfoFlags, MemoryArea, MemoryAreaIter, MemoryAreaType, MultibootInfo};
+    use crate::spinlock::SpinMutex;
     use core::ffi::CStr;
     use core::mem::size_of;
 
@@ -12,7 +13,7 @@ pub mod framealloc {
 
     // TODO(kosinw): Replace this with a better allocator
     #[derive(Debug, Clone)]
-    struct AreaFrameAllocator {
+    pub struct AreaFrameAllocator {
         next_free_frame: Frame,
         current_area: Option<&'static MemoryArea>,
         areas: MemoryAreaIter,
@@ -21,6 +22,8 @@ pub mod framealloc {
         multiboot_start: Frame,
         multiboot_end: Frame,
     }
+
+    static mut FRAME_ALLOCATOR: Option<SpinMutex<AreaFrameAllocator>> = None;
 
     impl AreaFrameAllocator {
         pub fn new(
@@ -103,12 +106,6 @@ pub mod framealloc {
         }
     }
 
-    extern "C" {
-        static KERNBASE: [u64; 0];
-        static KERNSTART: [u64; 0];
-        static KERNSTOP: [u64; 0];
-    }
-
     pub fn init(mbi_ptr: *const MultibootInfo) {
         let mbi = unsafe { &*mbi_ptr };
 
@@ -130,9 +127,9 @@ pub mod framealloc {
         }
 
         // Print out kernel start and stop addresses
-        let kernel_base = unsafe { KERNBASE.as_ptr() as u64 };
-        let kernel_start = unsafe { KERNSTART.as_ptr() as u64 } - kernel_base;
-        let kernel_end = unsafe { KERNSTOP.as_ptr() as u64 } - kernel_base;
+        let kernel_base = unsafe { super::layout::KERNBASE.as_ptr() as u64 };
+        let kernel_start = unsafe { super::layout::KERNSTART.as_ptr() as u64 } - kernel_base;
+        let kernel_end = unsafe { super::layout::KERNSTOP.as_ptr() as u64 } - kernel_base;
 
         log!(
             "[{kernel_start:#016x}-{kernel_end:#016x}]{:indent$}KERNEL",
@@ -149,7 +146,7 @@ pub mod framealloc {
             indent = 13
         );
 
-        // Memmap flag must be set.
+        // Memmap flag must be set to read mbi.memory_areas().
         if !mbi.flags.contains(InfoFlags::MEM_MAP) {
             panic!("expected {:?} in multiboot info", InfoFlags::MEM_MAP);
         }
@@ -167,8 +164,8 @@ pub mod framealloc {
             );
         }
 
-        // Create allocator finally
-        let mut allocator = AreaFrameAllocator::new(
+        // Create allocator.
+        let allocator = AreaFrameAllocator::new(
             kernel_start,
             kernel_end,
             multiboot_start,
@@ -176,11 +173,70 @@ pub mod framealloc {
             mbi.memory_areas(),
         );
 
-        for i in 0.. {
-            if allocator.allocate_frame().is_none() {
-                log!("allocated {} frames", i);
-                break;
-            }
+        unsafe {
+            FRAME_ALLOCATOR = Some(SpinMutex::new("framealloc", allocator));
         }
+    }
+
+    /// This function can only be called after framealloc::init.
+    /// Requests global frame allocator and passes it into a thunk.
+    pub fn with_allocator<U, F: FnMut(&mut AreaFrameAllocator) -> U>(thunk: F) -> Option<U> {
+        if let Some(lock) = unsafe { &FRAME_ALLOCATOR } {
+            Some(lock.with_lock(thunk))
+        } else {
+            None
+        }
+    }
+}
+
+pub mod layout {
+    use crate::arch::paging::PageTable;
+
+    // Physical memory layout
+
+    // qemu -machine microvm is set up like this
+    //
+    // [0x00000000100000-0x000000001d0000]             KERNEL
+    // [0x00000000009500-0x00000000009558]             MULTIBOOT
+    // [0x00000000000000-0x0000000009fc00]       0.62M AVAILABLE
+    // [0x0000000009fc00-0x000000000a0000]       0.00M RESERVED
+    // [0x000000000f0000-0x00000000100000]       0.06M RESERVED
+    // [0x00000000100000-0x0000001ffff000]     511.00M AVAILABLE
+    // [0x0000001ffff000-0x00000020000000]       0.00M RESERVED
+    // [0x000000fffc0000-0x00000100000000]       0.25M RESERVED
+
+    // the kernel uses physical memory starting from 0xffff800000000000
+    // KERNBASE -- 0xffff800000000000, start of physical memory
+    // KERNSTART -- entry.S and start of kernel
+    // TEXTEND -- end of kernel executable section, kernel data, rodata, bss
+    // KERNEND -- end of kernel
+
+    extern "C" {
+        pub static KERNBASE: [u64; 0];
+        pub static KERNSTART: [u64; 0];
+        pub static KERNSTOP: [u64; 0];
+        pub static bootpgtbl: PageTable;
+    }
+}
+
+pub mod vm {
+    use crate::arch::paging::PageTable;
+    use crate::log;
+    use crate::spinlock::SpinMutex;
+
+    pub fn init() {
+        // Get the page table that entry.S set up to allow kernel to boot.
+        let boot_pagetable = unsafe { &super::layout::bootpgtbl };
+
+        // Print out the mappings made by entry.S
+        log!("dumping boot pagetable");
+
+        // for i in 0..512 {
+        //     if !boot_pagetable[i].is_unused() {
+        //         log!("{i}: {:?}", boot_pagetable[i]);
+        //     }
+        // }
+
+        //
     }
 }

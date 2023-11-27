@@ -12,14 +12,13 @@ use crate::multiboot::MultibootInfo;
 
 static mut PERCPU0: KernelPage = KernelPage::empty();
 
+/// # Safety
 #[no_mangle]
 pub unsafe extern "C" fn kernel_main(mbi_ptr: *const MultibootInfo) {
-    arch::cpu::init(&mut PERCPU0, 0);
-    console::init();
-    print!("\x1bc"); // clears the screen
-    println!("lithium kernel is booting...\n");
-    log!("OK!");
-    memory::framealloc::init(mbi_ptr); // physical frame allocator
+    arch::cpu::init(&mut PERCPU0, 0);  // per-cpu kernel data
+    console::init();                            // console driver
+    memory::framealloc::init(mbi_ptr);          // physical frame allocator
+    memory::vm::init();                         // create kernel page table
 }
 
 mod runtime {

@@ -194,6 +194,9 @@ static mut CONSOLE: SpinMutex<Console> = SpinMutex::new(
 
 pub fn init() {
     uart::init();
+    crate::print!("\x1bc"); // clears the screen
+    crate::println!("lithium kernel is booting...\n");
+    crate::log!("OK!");
 }
 
 pub fn print(args: core::fmt::Arguments) {

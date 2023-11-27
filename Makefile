@@ -52,8 +52,8 @@ gdb:
 	$(GDB) -x cfg/.gdbinit
 
 # Check for errors.
-.PHONY: clippy
-clippy:
+.PHONY: check
+check:
 	$(CARGO) clippy \
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \

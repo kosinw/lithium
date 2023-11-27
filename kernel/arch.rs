@@ -487,6 +487,17 @@ pub mod paging {
             );
             self.entry = addr | flags.bits();
         }
+
+        #[inline]
+        pub fn frame(&self) -> Result<Frame, FrameError> {
+            if !self.flags().contains(PageTableFlags::PRESENT) {
+                Err(FrameError::FrameNotPresent)
+            } else if self.flags().contains(PageTableFlags::HUGE_PAGE) {
+                Err(FrameError::HugeFrame)
+            } else {
+                Ok(Frame::containing_address(self.addr()))
+            }
+        }
     }
 
     impl fmt::Debug for PageTableEntry {
@@ -515,6 +526,16 @@ pub mod paging {
         }
     }
 
+    /// The error returned by the `PageTableEntry::frame` method.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum FrameError {
+        /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
+        FrameNotPresent,
+        /// The entry does have the `HUGE_PAGE` flag set. The `frame` method has a standard 4KiB frame
+        /// as return type, so a huge frame can't be returned.
+        HugeFrame,
+    }
+
     #[repr(C, align(4096))]
     #[derive(Clone)]
     pub struct PageTable {
@@ -528,6 +549,31 @@ pub mod paging {
             PageTable {
                 entries: [EMPTY; 512],
             }
+        }
+
+        #[inline]
+        pub fn zero(&mut self) {
+            for entry in self.entries.iter_mut() {
+                entry.set_unused();
+            }
+        }
+
+        /// Returns an iterator over the entries of the page table.
+        #[inline]
+        pub fn iter(&self) -> impl Iterator<Item = &PageTableEntry> {
+            (0..512).map(move |i| &self.entries[i])
+        }
+
+        #[inline]
+        pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut PageTableEntry> {
+            let ptr = self.entries.as_mut_ptr();
+            (0..512).map(move |i| unsafe { &mut *ptr.add(i) })
+        }
+
+        /// Checks if the page table is empty (all entries are zero).
+        #[inline]
+        pub fn is_empty(&self) -> bool {
+            self.iter().all(|entry| entry.is_unused())
         }
     }
 
@@ -599,7 +645,7 @@ pub mod cpu {
         // Setup task state segment for a double fault handler stack.
         tss.interrupt_stack_table[0] = {
             let stack_start = page.as_ptr() as u64;
-            
+
             stack_start + 4096
         };
 

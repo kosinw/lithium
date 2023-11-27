@@ -111,15 +111,13 @@ _start64:
     ; Call kernel_main in Rust code.
     call    kernel_main
 
-.2:
+    ; Halt the kernel (should not reach here).
     cli
     hlt
-    jmp     .2
 
 section .rodata
 align PAGESIZE
 bootpgtbl:
-bootpgtbl4:
     dq      (bootpgtbl3 - KERNBASE) + (PAGE_WRITABLE | PAGE_PRESENT)
     resb    (PAGESIZE>>1) - 8
     dq      (bootpgtbl3 - KERNBASE) + (PAGE_WRITABLE | PAGE_PRESENT)
