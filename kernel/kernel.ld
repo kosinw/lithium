@@ -3,11 +3,9 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0xffff800000000000;
-    PROVIDE(KERNBASE = .);
+    . = 0x100000;
 
-    . = 0xffff800000100000;
-    PROVIDE(KERNSTART = .);
+    PROVIDE(__kernel_start = .);
     .text BLOCK(4096) : ALIGN(4096)
     {
         KEEP(*(.text.boot))
@@ -16,7 +14,7 @@ SECTIONS
         *(.trap)
         . = ALIGN(4096);
     }
-    PROVIDE(TEXTEND = .);
+    PROVIDE(__text_end = .);
 
     .rodata  BLOCK(4096) : ALIGN(4096)
     {
@@ -39,7 +37,7 @@ SECTIONS
 
     . = ALIGN(4096);
 
-    PROVIDE(KERNSTOP = .);
+    PROVIDE(__bss_end = .);
 
     /DISCARD/ : {
         *(.eh_frame)

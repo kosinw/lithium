@@ -6,7 +6,6 @@ global  STACKSIZE
 
 extern  kernel_main
 
-KERNBASE        equ 0xffff800000000000
 PAGESIZE        equ 4096
 STACKSIZE       equ PAGESIZE*10
 
@@ -52,12 +51,12 @@ align 4
 bits 32
 _start:
     ; Setup initial stack.
-    mov     esp, stack0 - KERNBASE + STACKSIZE
+    mov     esp, stack0 + STACKSIZE
 
     ; Setup identity paging before entering long mode.
     ; We identity map the first 512 2MiB pages into the page table.
     ; We also map the first 512 2MiB pages starting from 0xffff800000000000.
-    mov     eax, bootpgtbl - KERNBASE
+    mov     eax, bootpgtbl
     mov     cr3, eax
 
     ; Enable PAE, PSE, and FSGSBASE flags in CR4 register.
@@ -77,10 +76,10 @@ _start:
     mov     cr0, eax
 
     ; Load GDT pointer for long mode.
-    lgdt    [bootgdt.ptr - KERNBASE]
+    lgdt    [bootgdt.ptr]
 
     ; Jump into long mode code!
-    jmp     0x8:(_start64 - KERNBASE)
+    jmp     0x8:_start64
 
     ret
 
@@ -120,14 +119,14 @@ _start64:
 section .rodata
 align PAGESIZE
 bootpgtbl:
-    dq      (bootpgtbl3 - KERNBASE) + (PAGE_WRITABLE | PAGE_PRESENT)
+    dq      (bootpgtbl3) + (PAGE_WRITABLE | PAGE_PRESENT)
     resb    (PAGESIZE>>1) - 8
-    dq      (bootpgtbl3 - KERNBASE) + (PAGE_WRITABLE | PAGE_PRESENT)
+    dq      (bootpgtbl3) + (PAGE_WRITABLE | PAGE_PRESENT)
     resb    (PAGESIZE>>1) - 8
 
 align PAGESIZE
 bootpgtbl3:
-    dq      (bootpgtbl2 - KERNBASE) + (PAGE_WRITABLE | PAGE_PRESENT)
+    dq      (bootpgtbl2) + (PAGE_WRITABLE | PAGE_PRESENT)
     resb    PAGESIZE - 8
 
 align PAGESIZE
@@ -145,7 +144,7 @@ bootgdt:
     dq      SEG_ALWAYS1 | SEG_CODE | SEG_READ | SEG_LONG | SEG_PRESENT    ; long mode code segment
 .ptr:
     dw      ($)-bootgdt-1
-    dq      (bootgdt-KERNBASE)
+    dq      bootgdt
 
 section .bss
 align PAGESIZE

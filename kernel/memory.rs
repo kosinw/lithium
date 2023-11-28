@@ -128,9 +128,8 @@ pub mod framealloc {
         }
 
         // Print out kernel start and stop addresses
-        let kernel_base = unsafe { super::layout::KERNBASE.as_ptr() as u64 };
-        let kernel_start = unsafe { super::layout::KERNSTART.as_ptr() as u64 } - kernel_base;
-        let kernel_end = unsafe { super::layout::KERNSTOP.as_ptr() as u64 } - kernel_base;
+        let kernel_start = unsafe { super::layout::__kernel_start.as_ptr() as u64 };
+        let kernel_end = unsafe { super::layout::__bss_end.as_ptr() as u64 };
 
         log!(
             "[{kernel_start:#016x}-{kernel_end:#016x}]{:indent$}KERNEL",
@@ -206,21 +205,14 @@ pub mod layout {
     // [0x0000001ffff000-0x00000020000000] -- RESERVED  memory mapped PCI devices
     // [0x000000fffc0000-0x00000100000000] -- RESERVED  memory mapped PCI devices
 
-    // the kernel uses physical memory starting from 0xffff800000000000
-    // KERNBASE -- 0xffff800000000000, start of physical memory
-    // KERNSTART -- entry.S and start of kernel
-    // TEXTEND -- end of kernel executable section, kernel data, rodata, bss
-    // KERNEND -- end of kernel
-
     // virtio MMIO addresses + interrupts are hard coded like this:
     // virtio device 1 -- address: 0xfeb00000; irq:
     // virtio device 2 -- address: 0xfeb00200; irq:
     // virtio device 3 -- address: 0xfeb00400; irq:
 
     extern "C" {
-        pub static KERNBASE: [u64; 0];
-        pub static KERNSTART: [u64; 0];
-        pub static KERNSTOP: [u64; 0];
+        pub static __kernel_start: [u64; 0];
+        pub static __bss_end: [u64; 0];
         pub static bootpgtbl: PageTable;
         pub static stack0: [u64; 0];
         pub static STACKSIZE: usize;
@@ -228,10 +220,6 @@ pub mod layout {
 }
 
 pub mod vm {
-    /// Page table that uses fixed offset of KERNBASE for virtual addresses of page table frames.
-    pub struct KernelPageTable {
-
-    }
 
     pub fn init() {}
 }
