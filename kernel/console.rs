@@ -62,7 +62,9 @@ pub(crate) mod uart {
     }
 
     fn outb(port: u16, v: u8) {
-        unsafe { Port::new(port).write(v); }
+        unsafe {
+            Port::new(port).write(v);
+        }
     }
 
     fn inb(port: u16) -> u8 {
@@ -103,68 +105,60 @@ pub(crate) mod uart {
         }
 
         pub fn init(&mut self) {
-            unsafe {
-                // Disable interrupts from serial port.
-                outb(self.port_intr_enable(), 0x00);
+            // Disable interrupts from serial port.
+            outb(self.port_intr_enable(), 0x00);
 
-                // Enable DLAB.
-                outb(self.port_line_ctrl(), 0x80);
+            // Enable DLAB.
+            outb(self.port_line_ctrl(), 0x80);
 
-                // Set maximum speed to 38400 bps by configuring DLL and DLM.
-                outb(self.port_data(), 0x03);
-                outb(self.port_intr_enable(), 0x00);
+            // Set maximum speed to 38400 bps by configuring DLL and DLM.
+            outb(self.port_data(), 0x03);
+            outb(self.port_intr_enable(), 0x00);
 
-                // Disable DLAB and set data word length to 8 bits.
-                outb(self.port_line_ctrl(), 0x03);
+            // Disable DLAB and set data word length to 8 bits.
+            outb(self.port_line_ctrl(), 0x03);
 
-                // Enable FIFO, clear TX/RX queues and
-                // set interrupt watermark at 14 bytes
-                outb(self.port_fifo_ctrl(), 0xc7);
+            // Enable FIFO, clear TX/RX queues and
+            // set interrupt watermark at 14 bytes
+            outb(self.port_fifo_ctrl(), 0xc7);
 
-                // Mark data terminal ready, signal request to send
-                // and enable auxilliary output #2 (used as interrupt line for CPU)
-                outb(self.port_modem_ctrl(), 0x0b);
+            // Mark data terminal ready, signal request to send
+            // and enable auxilliary output #2 (used as interrupt line for CPU)
+            outb(self.port_modem_ctrl(), 0x0b);
 
-                // Enable interrupts
-                outb(self.port_intr_enable(), 0x01);
-            }
+            // Enable interrupts
+            outb(self.port_intr_enable(), 0x01);
         }
 
         fn line_status(&mut self) -> LineStatusFlags {
-            unsafe { LineStatusFlags::from_bits_truncate(inb(self.port_line_status())) }
+            LineStatusFlags::from_bits_truncate(inb(self.port_line_status()))
         }
 
         pub fn send(&mut self, data: u8) {
-            unsafe {
-                match data {
-                    BACKSPACE | DELETE => {
-                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
-                        outb(self.port_data(), b'\x08');
-                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
-                        outb(self.port_data(), b' ');
-                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
-                        outb(self.port_data(), b'\x08');
-                    }
-                    _ => {
-                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
-                        outb(self.port_data(), data);
-                    }
+            match data {
+                BACKSPACE | DELETE => {
+                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    outb(self.port_data(), b'\x08');
+                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    outb(self.port_data(), b' ');
+                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    outb(self.port_data(), b'\x08');
+                }
+                _ => {
+                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    outb(self.port_data(), data);
                 }
             }
         }
 
         pub fn send_raw(&mut self, data: u8) {
-            unsafe {
-                busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
-                outb(self.port_data(), data);
-            }
+            busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+            outb(self.port_data(), data);
         }
 
         pub fn receive(&mut self) -> u8 {
-            unsafe {
-                busy_wait!(self.line_status().contains(LineStatusFlags::INPUT_FULL));
-                inb(self.port_data())
-            }
+            busy_wait!(self.line_status().contains(LineStatusFlags::INPUT_FULL));
+            inb(self.port_data())
         }
     }
 

@@ -91,7 +91,7 @@ target/obj/kernel.o: $(RUSTFILES) Makefile
 	$(CARGO) build \
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \
-	-Z build-std=alloc,core,compiler_builtins \
+	-Z build-std=alloc,core,compiler_builtins
 	cp target/lithium/$(PROFILE_DIR)/libkernel.a $@
 
 # Compilation rules for *.S files.

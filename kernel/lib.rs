@@ -3,7 +3,7 @@
 
 mod console;
 mod cpu;
-mod memory;
+// mod memory;
 mod multiboot;
 mod runtime;
 
@@ -18,6 +18,6 @@ use crate::multiboot::MultibootInfo;
 pub extern "C" fn kernel_main(mbi_ptr: *const MultibootInfo) {
     cpu::init(0); // per-cpu kernel data structure
     console::init(); // console driver
-    memory::framealloc::init(mbi_ptr); // physical frame allocator
-    memory::vm::init(); // create kernel page table
+    // memory::framealloc::init(mbi_ptr); // physical frame allocator
+    // memory::vm::init(); // create kernel page table
 }

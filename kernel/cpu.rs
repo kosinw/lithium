@@ -77,10 +77,10 @@ impl Cpu {
     /// Creates a new per-cpu kernel data structure.
     pub const fn new() -> Self {
         Self {
-            id: Default::default(),
+            id: 0,
             freq: CpuFrequency::Invalid,
-            ncli: Default::default(),
-            intena: Default::default(),
+            ncli: 0,
+            intena: false,
             tss: TaskStateSegment::new(),
             gdt: GlobalDescriptorTable::new(),
         }
@@ -167,23 +167,24 @@ pub fn init(id: usize) {
     // TODO(kosinw): Come up with another way for multiprocessor support in the future
     // Each proecssor should have their own trap stack.
     tss.interrupt_stack_table[0] = {
-        let stack_start = VirtAddr::from_ptr(unsafe { TRAP_STACK.as_ptr() });
+        let stack_start = VirtAddr::from_ptr(TRAP_STACK.as_ptr());
         stack_start + TRAP_STACK_SIZE
     };
 
-    let cs = gdt.add_entry(Descriptor::kernel_code_segment());
-    let ds = gdt.add_entry(Descriptor::kernel_data_segment());
-    let ts = gdt.add_entry(Descriptor::tss_segment(&tss));
-
-    // Load the newly created segment descriptors into appropriate registers
-    gdt.load();
     unsafe {
+        let cs = gdt.add_entry(Descriptor::kernel_code_segment());
+        let ds = gdt.add_entry(Descriptor::kernel_data_segment());
+        let ts = gdt.add_entry(Descriptor::tss_segment_unchecked(&tss));
+
+        // Load the newly created segment descriptors into appropriate registers
+
+        gdt.load_unsafe();
         CS::set_reg(cs);
         DS::set_reg(ds);
         ES::set_reg(ds);
         SS::set_reg(ds);
         load_tss(ts);
-    };
+    }
 
     // Detect the frequency of the processor.
     // TODO(kosinw): Add alternate methods of detecting the frequency and provenance,
