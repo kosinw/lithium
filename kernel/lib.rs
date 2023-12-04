@@ -6,8 +6,6 @@ mod cpu;
 mod memory;
 mod multiboot;
 mod runtime;
-mod sync;
-// mod spinlock;
 
 use crate::multiboot::MultibootInfo;
 

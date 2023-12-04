@@ -1,21 +1,12 @@
 #![allow(dead_code)]
 
-use crate::spinlock::SpinMutex;
-
 pub(crate) mod uart {
-    use core::fmt::Write;
-
     use bitflags::bitflags;
-
+    use core::fmt::Write;
+    use spin::Mutex;
     use x86_64::instructions::port::Port;
 
-    use crate::{
-        arch::asm::{inb, outb},
-        spinlock::SpinMutex,
-    };
-
-
-    macro_rules! spin {
+    macro_rules! busy_wait {
         ($cond:expr) => {
             while !$cond {
                 core::hint::spin_loop();
@@ -40,7 +31,7 @@ pub(crate) mod uart {
     }
 
     #[derive(Debug, Copy, Clone)]
-    pub struct SerialPort(Port);
+    pub struct SerialPort(u16);
 
     pub const COM1: u16 = 0x3F8;
 
@@ -51,22 +42,31 @@ pub(crate) mod uart {
     const BACKSPACE: u8 = ctrl(b'H');
     const DELETE: u8 = 0x7F;
 
-    // pub fn init() {
-    //     unsafe {
-    //         UART.lock().init();
-    //     }
-    // }
+    static mut UART: Mutex<SerialPort> = Mutex::new(SerialPort(COM1));
 
-    pub fn print(args: core::fmt::Arguments) {
+    pub fn init() {
         unsafe {
-            // UART.lock().write_fmt(args).unwrap();
-            Port::new(COM1).write_fmt(args).unwrap();
+            UART.lock().init();
+        }
+    }
+
+    pub fn locked_print(args: core::fmt::Arguments) {
+        unsafe {
+            UART.lock().write_fmt(args).unwrap();
         }
     }
 
     // do not acquire lock in case panic was caused by locking issues
-    pub fn panic_print(args: core::fmt::Arguments) {
+    pub fn print(args: core::fmt::Arguments) {
         SerialPort::new(COM1).write_fmt(args).unwrap()
+    }
+
+    fn outb(port: u16, v: u8) {
+        unsafe { Port::new(port).write(v); }
+    }
+
+    fn inb(port: u16) -> u8 {
+        unsafe { Port::new(port).read() }
     }
 
     impl SerialPort {
@@ -138,15 +138,15 @@ pub(crate) mod uart {
             unsafe {
                 match data {
                     BACKSPACE | DELETE => {
-                        spin!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                         outb(self.port_data(), b'\x08');
-                        spin!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                         outb(self.port_data(), b' ');
-                        spin!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                         outb(self.port_data(), b'\x08');
                     }
                     _ => {
-                        spin!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                        busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                         outb(self.port_data(), data);
                     }
                 }
@@ -155,14 +155,14 @@ pub(crate) mod uart {
 
         pub fn send_raw(&mut self, data: u8) {
             unsafe {
-                spin!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                 outb(self.port_data(), data);
             }
         }
 
         pub fn receive(&mut self) -> u8 {
             unsafe {
-                spin!(self.line_status().contains(LineStatusFlags::INPUT_FULL));
+                busy_wait!(self.line_status().contains(LineStatusFlags::INPUT_FULL));
                 inb(self.port_data())
             }
         }
@@ -178,6 +178,8 @@ pub(crate) mod uart {
     }
 }
 
+use spin::Mutex;
+
 pub struct Console {
     buffer: [u8; 256],
     read_index: usize,
@@ -185,15 +187,12 @@ pub struct Console {
     edit_index: usize,
 }
 
-static mut CONSOLE: SpinMutex<Console> = SpinMutex::new(
-    "cons",
-    Console {
-        buffer: [0u8; 256],
-        read_index: 0,
-        write_index: 0,
-        edit_index: 0,
-    },
-);
+static mut CONSOLE: Mutex<Console> = Mutex::new(Console {
+    buffer: [0u8; 256],
+    read_index: 0,
+    write_index: 0,
+    edit_index: 0,
+});
 
 pub fn init() {
     uart::init();
@@ -209,7 +208,7 @@ pub fn print(args: core::fmt::Arguments) {
 #[macro_export]
 macro_rules! kprint {
     ($($args:tt)*) => ({
-        use $crate::console::uart::panic_print;
+        use $crate::console::uart::print;
         print(format_args!($($args)*));
     })
 }
@@ -217,7 +216,7 @@ macro_rules! kprint {
 #[macro_export]
 macro_rules! print {
     ($($args:tt)*) => ({
-        use $crate::console::print;
+        use $crate::console::uart::locked_print;
         locked_print(format_args!($($args)*));
     })
 }
@@ -232,8 +231,7 @@ macro_rules! println {
 macro_rules! log {
     ($($arg:tt)*) => ({
         unsafe {
-            use $crate::arch::asm;
-            use $crate::arch::cpu;
+            use $crate::cpu;
             const ANSI_FOREGROUND_YELLOW: &str = "\x1b[33m";
             const ANSI_CLEAR: &str = "\x1b[0m";
             const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";

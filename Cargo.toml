@@ -11,4 +11,5 @@ crate-type = ["staticlib", "lib"]
 [dependencies]
 bitflags = "2.4.1"
 raw-cpuid = "11.0.1"
+spin = "0.9.8"
 x86_64 = "0.14.11"

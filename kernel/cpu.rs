@@ -22,7 +22,7 @@ pub const TRAP_STACK_SIZE: usize = 4096 * 5;
 // This structure should be protected by a spinlock but locks require
 // access to this structure to track the level of interrupt nesting.
 // Sort of a chicken-and-egg problem..
-static mut CPUS: [Cpu; CPU_COUNT] = [Default::default(); CPU_COUNT];
+static mut CPUS: [Cpu; CPU_COUNT] = [Cpu::new(); CPU_COUNT];
 
 // For now, we are just hard coding a large array in .bss
 // to handle for the stack. Ideally we would have allocated this
@@ -73,8 +73,9 @@ pub struct Cpu {
     gdt: GlobalDescriptorTable, // global descriptor table
 }
 
-impl Default for Cpu {
-    fn default() -> Self {
+impl Cpu {
+    /// Creates a new per-cpu kernel data structure.
+    pub const fn new() -> Self {
         Self {
             id: Default::default(),
             freq: CpuFrequency::Invalid,
@@ -84,9 +85,6 @@ impl Default for Cpu {
             gdt: GlobalDescriptorTable::new(),
         }
     }
-}
-
-impl Cpu {
     /// Turns off interrupts by pushing a request onto a stack.
     /// Only when all requests have been popped off the stack are
     /// they re-enabled (if they were enabled before being turned off).
@@ -144,7 +142,7 @@ impl Cpu {
     /// Returns the timer ticks with 1 microsecond resolution.
     #[inline]
     pub fn get_timer_ticks(&self) -> f64 {
-        f64::from(self.get_timestamp()) / f64::from(self.get_frequency())
+        (self.get_timestamp() as f64) / (self.get_frequency() as f64)
     }
 }
 
