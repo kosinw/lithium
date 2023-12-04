@@ -23,7 +23,6 @@ CARGO := cargo
 OBJCOPY := $(ARCH)-objcopy
 OBJDUMP := $(ARCH)-objdump
 
-
 # Use "find" to glob all *.S, *.rs, and *.ld files in the tree and obtain the
 # object and header dependency file names.
 ASMFILES := $(shell cd kernel && find -L * -type f -name '*.S')
@@ -63,8 +62,7 @@ check:
 	$(CARGO) clippy \
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \
-	-Z build-std=alloc,core,compiler_builtins \
-	--target cfg/lithium.json
+	-Z build-std=alloc,core,compiler_builtins
 
 # Check for errors.
 .PHONY: fix
@@ -72,8 +70,7 @@ fix:
 	$(CARGO) fix \
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \
-	-Z build-std=alloc,core,compiler_builtins \
-	--target cfg/lithium.json
+	-Z build-std=alloc,core,compiler_builtins
 
 # Build the kernel.
 .PHONY: kernel
@@ -95,7 +92,6 @@ target/obj/kernel.o: $(RUSTFILES) Makefile
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \
 	-Z build-std=alloc,core,compiler_builtins \
-	--target cfg/lithium.json
 	cp target/lithium/$(PROFILE_DIR)/libkernel.a $@
 
 # Compilation rules for *.S files.

@@ -5,16 +5,20 @@ use crate::spinlock::SpinMutex;
 pub(crate) mod uart {
     use core::fmt::Write;
 
+    use bitflags::bitflags;
+
+    use x86_64::instructions::port::Port;
+
     use crate::{
         arch::asm::{inb, outb},
         spinlock::SpinMutex,
     };
-    use bitflags::bitflags;
+
 
     macro_rules! spin {
         ($cond:expr) => {
             while !$cond {
-                $crate::arch::asm::pause();
+                core::hint::spin_loop();
             }
         };
     }
@@ -36,7 +40,7 @@ pub(crate) mod uart {
     }
 
     #[derive(Debug, Copy, Clone)]
-    pub struct SerialPort(u16);
+    pub struct SerialPort(Port);
 
     pub const COM1: u16 = 0x3F8;
 
@@ -47,17 +51,16 @@ pub(crate) mod uart {
     const BACKSPACE: u8 = ctrl(b'H');
     const DELETE: u8 = 0x7F;
 
-    static mut UART: SpinMutex<SerialPort> = SpinMutex::new("uart", SerialPort::new(COM1));
-
-    pub fn init() {
-        unsafe {
-            UART.lock().init();
-        }
-    }
+    // pub fn init() {
+    //     unsafe {
+    //         UART.lock().init();
+    //     }
+    // }
 
     pub fn print(args: core::fmt::Arguments) {
         unsafe {
-            UART.lock().write_fmt(args).unwrap();
+            // UART.lock().write_fmt(args).unwrap();
+            Port::new(COM1).write_fmt(args).unwrap();
         }
     }
 
@@ -207,7 +210,7 @@ pub fn print(args: core::fmt::Arguments) {
 macro_rules! kprint {
     ($($args:tt)*) => ({
         use $crate::console::uart::panic_print;
-        panic_print(format_args!($($args)*));
+        print(format_args!($($args)*));
     })
 }
 
@@ -215,7 +218,7 @@ macro_rules! kprint {
 macro_rules! print {
     ($($args:tt)*) => ({
         use $crate::console::print;
-        print(format_args!($($args)*));
+        locked_print(format_args!($($args)*));
     })
 }
 
@@ -234,12 +237,10 @@ macro_rules! log {
             const ANSI_FOREGROUND_YELLOW: &str = "\x1b[33m";
             const ANSI_CLEAR: &str = "\x1b[0m";
             const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";
+            let ticks = cpu::ticks();
             let id = cpu::id();
-            let tsc = asm::r_tsc();
-            let freq = asm::r_tschz();
-            let timestamp = tsc as f64 / freq as f64;
             let this_file = file!();
-            $crate::print!("{ANSI_FOREGROUND_YELLOW}[{timestamp: >13.6}]{ANSI_CLEAR} ");
+            $crate::print!("{ANSI_FOREGROUND_YELLOW}[{ticks: >13.6}]{ANSI_CLEAR} ");
             $crate::print!("{ANSI_FOREGROUND_CYAN}");
             $crate::print!("{this_file:<22.22}");
             $crate::print!("{ANSI_CLEAR}");

@@ -205,15 +205,9 @@ pub mod layout {
     // [0x0000001ffff000-0x00000020000000] -- RESERVED  memory mapped PCI devices
     // [0x000000fffc0000-0x00000100000000] -- RESERVED  memory mapped PCI devices
 
-    // virtio MMIO addresses + interrupts are hard coded like this:
-    // virtio device 1 -- address: 0xfeb00000; irq:
-    // virtio device 2 -- address: 0xfeb00200; irq:
-    // virtio device 3 -- address: 0xfeb00400; irq:
-
     extern "C" {
         pub static __kernel_start: [u64; 0];
         pub static __bss_end: [u64; 0];
-        pub static bootpgtbl: PageTable;
         pub static stack0: [u64; 0];
         pub static STACKSIZE: usize;
     }

@@ -34,6 +34,7 @@ EFER_SCE        equ 1 << 0
 EFER_LME        equ 1 << 8
 EFER_NX         equ 1 << 11
 EFER_BOOT       equ EFER_SCE | EFER_LME | EFER_NX
+IA32_EFER_MSR   equ 0xc0000080
 
 SEG_CODE        equ 1 << 43
 SEG_READ        equ 1 << 41
@@ -48,14 +49,13 @@ align 4
     dd      MBFLAGS
     dd      CHECKSUM
 
-bits 32
+[bits 32]
 _start:
     ; Setup initial stack.
     mov     esp, stack0 + STACKSIZE
 
     ; Setup identity paging before entering long mode.
-    ; We identity map the first 512 2MiB pages into the page table.
-    ; We also map the first 512 2MiB pages starting from 0xffff800000000000.
+    ; We identity map the first 1GiB into the page table (512 PTEs * 2 MiB).
     mov     eax, bootpgtbl
     mov     cr3, eax
 
@@ -65,7 +65,7 @@ _start:
     mov     cr4, eax
 
     ; Enable long mode, NX bit, and syscall extensions in EFER register.
-    mov     ecx, 0xc0000080
+    mov     ecx, IA32_EFER_MSR
     rdmsr
     or      eax, EFER_BOOT
     wrmsr
@@ -84,7 +84,7 @@ _start:
     ret
 
 section .text
-bits 64
+[bits 64]
 _start64:
     ; Clear segment registers.
     xor     ax, ax
@@ -120,9 +120,7 @@ section .rodata
 align PAGESIZE
 bootpgtbl:
     dq      (bootpgtbl3) + (PAGE_WRITABLE | PAGE_PRESENT)
-    resb    (PAGESIZE>>1) - 8
-    dq      (bootpgtbl3) + (PAGE_WRITABLE | PAGE_PRESENT)
-    resb    (PAGESIZE>>1) - 8
+    resb    PAGESIZE - 8
 
 align PAGESIZE
 bootpgtbl3:
