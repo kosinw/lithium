@@ -18,14 +18,9 @@ mod trap;
 /// linked unikernel application.
 #[no_mangle]
 pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) {
-    use alloc::vec;
-
     cpu::init(0);
     console::init();
     memory::init(mbi_ptr);
     heap::init();
-
-    let v = vec![1,2,3,4,5];
-    crate::log!("vec!!!! {:?}", v);
-    // trap::init();
+    trap::init();
 }

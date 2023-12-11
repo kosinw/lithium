@@ -25,7 +25,8 @@ use x86_64::{PhysAddr, VirtAddr};
 const MAX_PHYS_REGIONS: usize = 16;
 
 /// Offset where 4GiB of physical memory is identity mapped to.
-pub const HIGH_HALF_DIRECT_MAP: u64 = 0xFFFF800000000000u64;
+pub const HIGH_HALF_BASE: u64 = 0xFFFF800000000000u64;
+// pub const DEVICE_BASE: u64 = 0xFFFFFFFF40000000u64;
 
 // Offset where heap starts.
 pub const HEAP_START: u64 = 0x444444440000u64;
@@ -361,7 +362,7 @@ pub struct PhysicalMemoryLayout {
     data_start: PhysAddr,
     kernel_end: PhysAddr,
     phys_stop: PhysAddr,
-    device_start: PhysAddr,
+    // device_start: PhysAddr,
 }
 
 impl PhysicalMemoryLayout {
@@ -371,15 +372,15 @@ impl PhysicalMemoryLayout {
             let kernel_start = __kernel_start.as_ptr() as u64;
             let data_start = __data_start.as_ptr() as u64;
             let kernel_end = __kernel_end.as_ptr() as u64;
-            let phys_stop = 0xE000000u64;
-            let device_start = 0xFE000000u64;
+            let phys_stop = 0x80000000u64;
+            // let device_start = 0xFE000000u64;
 
             Self {
                 kernel_start: PhysAddr::new(kernel_start),
                 data_start: PhysAddr::new(data_start),
                 kernel_end: PhysAddr::new(kernel_end),
                 phys_stop: PhysAddr::new(phys_stop),
-                device_start: PhysAddr::new(device_start),
+                // device_start: PhysAddr::new(device_start),
             }
         }
     }
@@ -440,7 +441,7 @@ where
     for<'a> OffsetPageTable<'a>: Mapper<S>,
 {
     let mut kpgtbl = KERNEL_PAGETABLE.lock();
-    let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_DIRECT_MAP));
+    let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_BASE));
     map_virtual_region_with_pgtbl(&mut mapper, va, pa, size, flags)
 }
 
@@ -552,7 +553,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         // map 4 GiB physical memory into higher half address
         map_virtual_region_with_pgtbl::<Size1GiB>(
             &mut mapper,
-            VirtAddr::new(HIGH_HALF_DIRECT_MAP),
+            VirtAddr::new(HIGH_HALF_BASE),
             PhysAddr::zero(),
             Size1GiB::SIZE * 4,
             PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
@@ -597,7 +598,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
             layout.phys_stop - layout.kernel_end.align_up(Size2MiB::SIZE),
             PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
         )
-        .expect("failed to identity map kernel and physical memory");
+        .expect("failed to identity map unallocated memory");
 
         let new_page_table = kpgtbl.deref() as *const PageTable as u64;
         let page_table_frame = PhysFrame::containing_address(PhysAddr::new(new_page_table));

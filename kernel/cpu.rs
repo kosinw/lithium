@@ -56,6 +56,7 @@ impl CpuFrequency {
 
 /// Per-CPU data structure that holds important information such
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub struct Cpu {
     id: usize,                  // logical identifier of core
     freq: CpuFrequency,         // frequency which timestamp counter runs at
@@ -197,9 +198,9 @@ pub unsafe fn id() -> usize {
 /// GSBASE register during the cpu::init routine. If this routine is called
 /// before cpu::init, then potential invalid data will be read and this function is
 /// unsafe.
-pub unsafe fn current_mut() -> &'static mut Cpu {
-    GS::read_base().as_mut_ptr::<Cpu>().as_mut().unwrap()
-}
+// pub unsafe fn current_mut() -> &'static mut Cpu {
+//     GS::read_base().as_mut_ptr::<Cpu>().as_mut().unwrap()
+// }
 
 /// Gets the ticks of the current processor.
 ///
