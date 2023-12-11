@@ -2,18 +2,33 @@ use crate::log;
 use crate::multiboot::InfoFlags;
 use crate::multiboot::MemoryAreaType;
 use crate::multiboot::MultibootInformation;
-use crate::println;
+use core::ops::Deref;
+use core::ops::DerefMut;
 use spin::Mutex;
+use x86_64::instructions::tlb::flush_all;
+use x86_64::registers::control::Cr3;
+use x86_64::registers::control::Cr3Flags;
+use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::page::AddressNotAligned;
 use x86_64::structures::paging::FrameAllocator;
 use x86_64::structures::paging::FrameDeallocator;
+use x86_64::structures::paging::Mapper;
+use x86_64::structures::paging::OffsetPageTable;
+use x86_64::structures::paging::Page;
 use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::PageTable;
+use x86_64::structures::paging::PageTableFlags;
 use x86_64::structures::paging::PhysFrame;
+use x86_64::structures::paging::Size1GiB;
+use x86_64::structures::paging::Size4KiB;
+use x86_64::structures::paging::Translate;
 use x86_64::{PhysAddr, VirtAddr};
 
 /// Maximum number of physical memory regions that can be used by physical allocator.
 const MAX_PHYS_REGIONS: usize = 16;
+
+/// Offset where 4GiB of physical memory is identity mapped to.
+const HIGH_HALF_DIRECT_MAP: u64 = 0xFFFF800000000000u64;
 
 /// Physical frame allocator. Responsible for allocating physical frames for virtual memory manager.
 static mut FRAME_ALLOCATOR: Mutex<PhysicalAllocator> = Mutex::new(PhysicalAllocator::new());
@@ -177,8 +192,7 @@ impl PhysicalAllocator {
 unsafe impl<S: PageSize> FrameAllocator<S> for PhysicalAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<S>> {
         self.allocate(S::SIZE as usize)
-            .map(|x| x.try_into().ok())
-            .flatten()
+            .and_then(|x| x.try_into().ok())
     }
 }
 
@@ -349,6 +363,56 @@ impl PhysicalMemoryBitmap {
     }
 }
 
+/// Maps a region of memory in a page table.
+///
+/// This function takes a virtual address, physical address, and size as parameters
+/// and establishes a mapping between the specified virtual and physical addresses.
+/// The size parameter determines the length of the memory region to be mapped.
+///
+/// This function does not flush the TLB.
+pub unsafe fn mappages<S: PageSize>(
+    pgtbl: &mut impl Mapper<S>,
+    va: VirtAddr,
+    pa: PhysAddr,
+    size: u64,
+    flags: PageTableFlags,
+) -> Result<(), MapToError<S>> {
+    let start_page: Page<S> = Page::containing_address(va);
+    let end_page: Page<S> = Page::containing_address(va + size);
+
+    let mut alloc = FRAME_ALLOCATOR.lock();
+
+    for page in Page::range(start_page, end_page) {
+        let frame_addr = pa + (page - start_page);
+        let frame = PhysFrame::containing_address(frame_addr);
+
+        let _ = pgtbl.map_to(page, frame, flags, alloc.deref_mut())?;
+    }
+
+    Ok(())
+}
+
+/// Maps a region of memory into the kernel page table.
+///
+/// This function takes a virtual address, physical address, and size as parameters
+/// and establishes a mapping between the specified virtual and physical addresses.
+/// The size parameter determines the length of the memory region to be mapped.
+///
+/// This function does not flush the TLB.
+pub unsafe fn kvmmap<S: PageSize>(
+    va: VirtAddr,
+    pa: PhysAddr,
+    size: u64,
+    flags: PageTableFlags,
+) -> Result<(), MapToError<S>>
+where
+    for<'a> OffsetPageTable<'a>: Mapper<S>,
+{
+    let mut kpgtbl = KERNEL_PAGETABLE.lock();
+    let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_DIRECT_MAP));
+    mappages(&mut mapper, va, pa, size, flags)
+}
+
 /// Initializes the memory subsystem of the kernel.
 ///
 /// This function performs the initialization of both the physical memory and virtual
@@ -374,6 +438,12 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
     let kernel_start: usize = unsafe {
         let result;
         core::arch::asm!("lea {}, __kernel_start", out(reg) result);
+        result
+    };
+
+    let text_end: usize = unsafe {
+        let result;
+        core::arch::asm!("lea {}, __text_end", out(reg) result);
         result
     };
 
@@ -407,8 +477,6 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
             area.area_type()
         );
     }
-
-    log!("memory::init(): initializing physical bitmap allocator...");
 
     // Keep track of kernel frame so we don't give it to the allocator.
     let kernel_frame = Frame {
@@ -444,7 +512,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
 
     let sz = unsafe { FRAME_ALLOCATOR.lock().bytes_remaining() };
 
-    log!("memory::init(): physical bitmap allocator successfully initialized!");
+    log!("memory::init(): physical bitmap allocator... [ \x1b[0;32mOK\x1b[0m ]");
     log!("memory::init(): {sz} total bytes available");
 
     // Initialize paging and switch away from boot page table to kernel managed.
@@ -454,13 +522,65 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         result
     };
 
-    log!("memory::init(): currently using boot page table at {bootpgtbl:#016x}");
+    log!("memory::init(): currently using bootloader page table at {bootpgtbl:#016x}");
 
-    let mut kpgtbl = unsafe { KERNEL_PAGETABLE.lock() };
-    kpgtbl.zero();
+    unsafe {
+        let mut kpgtbl = KERNEL_PAGETABLE.lock();
 
-    log!(
-        "memory::init(): now using kernel page table at {:016p}",
-        &*kpgtbl as *const PageTable
-    );
+        kpgtbl.zero();
+
+        // Our physical offset here is zero because the first 1GiB is direct mapped from the bootloader.
+        // Later when we modify the page table kernel it will be based on HIGH_HALF_DIRECT_MAP.
+        let mut mapper = OffsetPageTable::new(kpgtbl.deref_mut(), VirtAddr::zero());
+
+        // map physical memory into higher half address
+        mappages::<Size1GiB>(
+            &mut mapper,
+            VirtAddr::new(HIGH_HALF_DIRECT_MAP),
+            PhysAddr::zero(),
+            Size1GiB::SIZE * 4,
+            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
+        )
+        .unwrap();
+
+        // identity map first four GiB
+        mappages::<Size1GiB>(
+            &mut mapper,
+            VirtAddr::zero(),
+            PhysAddr::zero(),
+            Size1GiB::SIZE * 4,
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+        )
+        .unwrap();
+
+        // identity map kernel data as read and writable
+        // mappages::<Size4KiB>(
+        //     &mut mapper,
+        //     VirtAddr::new(text_end as u64),
+        //     PhysAddr::new(text_end as u64),
+        //     (PHYSIZE as usize - text_end) as u64,
+        //     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
+        // )
+        // .unwrap();
+
+        // // map the lowest 1MiB as readable and writable
+        // mappages::<Size4KiB>(
+        //     &mut mapper,
+        //     VirtAddr::new(0),
+        //     PhysAddr::new(0),
+        //     0x100000u64,
+        //     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
+        // )
+        // .unwrap();
+
+        // map every above the kernel as readable and writeable
+
+        let new_page_table = kpgtbl.deref() as *const PageTable as u64;
+
+        let (_, flags) = Cr3::read();
+        Cr3::write(
+            PhysFrame::containing_address(PhysAddr::new(new_page_table)),
+            flags,
+        );
+    }
 }

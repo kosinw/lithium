@@ -187,7 +187,7 @@ pub fn init() {
     uart::init();
     crate::print!("\x1bc"); // clears the screen
     crate::println!();
-    crate::log!("lithium kernel is booting");
+    crate::log!("lithium kernel is booting... [ \x1b[0;32mOK\x1b[0m ]");
 }
 
 pub fn print(args: core::fmt::Arguments) {
