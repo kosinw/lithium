@@ -5,9 +5,7 @@ use crate::multiboot::MultibootInformation;
 use core::ops::Deref;
 use core::ops::DerefMut;
 use spin::Mutex;
-use x86_64::instructions::tlb::flush_all;
 use x86_64::registers::control::Cr3;
-use x86_64::registers::control::Cr3Flags;
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::page::AddressNotAligned;
 use x86_64::structures::paging::FrameAllocator;
@@ -20,8 +18,6 @@ use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::PageTableFlags;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::Size1GiB;
-use x86_64::structures::paging::Size4KiB;
-use x86_64::structures::paging::Translate;
 use x86_64::{PhysAddr, VirtAddr};
 
 /// Maximum number of physical memory regions that can be used by physical allocator.
@@ -441,12 +437,6 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         result
     };
 
-    let text_end: usize = unsafe {
-        let result;
-        core::arch::asm!("lea {}, __text_end", out(reg) result);
-        result
-    };
-
     let kernel_end: usize = unsafe {
         let result;
         core::arch::asm!("lea {}, __kernel_end", out(reg) result);
@@ -512,18 +502,14 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
 
     let sz = unsafe { FRAME_ALLOCATOR.lock().bytes_remaining() };
 
-    log!("memory::init(): physical bitmap allocator... [ \x1b[0;32mOK\x1b[0m ]");
+    log!("memory::init(): physical bitmap allocator initialized [ \x1b[0;32mOK\x1b[0m ]");
     log!("memory::init(): {sz} total bytes available");
 
-    // Initialize paging and switch away from boot page table to kernel managed.
-    let bootpgtbl: usize = unsafe {
-        let result;
-        core::arch::asm!("lea {}, bootpgtbl", out(reg) result);
-        result
-    };
-
     let (frame, _) = Cr3::read();
-    log!("memory::init(): currently using bootloader page table at {:#016x}", frame.start_address().as_u64());
+    log!(
+        "memory::init(): currently using bootloader page table at {:#016x}",
+        frame.start_address().as_u64()
+    );
 
     unsafe {
         let mut kpgtbl = KERNEL_PAGETABLE.lock();
@@ -544,7 +530,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         )
         .unwrap();
 
-        // identity map first four GiB
+        // identity map first four GiB (TODO(kosinw): Make this a more fine grained page table)
         mappages::<Size1GiB>(
             &mut mapper,
             VirtAddr::zero(),
@@ -564,5 +550,13 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
     }
 
     let (frame, _) = Cr3::read();
-    log!("memory::init(): now using kernel page table at {:#016x}", frame.start_address().as_u64());
+    log!(
+        "memory::init(): now using kernel page table at {:#016x}",
+        frame.start_address().as_u64()
+    );
+
+    log!("memory::init(): paging initialized [ \x1b[0;32mOK\x1b[0m ]");
+
+    let sz = unsafe { FRAME_ALLOCATOR.lock().bytes_remaining() };
+    log!("memory::init(): {sz} total bytes available");
 }

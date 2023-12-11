@@ -1,8 +1,11 @@
 #![no_std]
 #![feature(panic_info_message)]
 
+extern crate alloc;
+
 mod console;
 mod cpu;
+mod heap;
 mod memory;
 mod multiboot;
 mod runtime;
@@ -14,7 +17,7 @@ mod runtime;
 /// linked unikernel application.
 #[no_mangle]
 pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) {
-    cpu::init(0); // per-cpu kernel data structure
-    console::init(); // console driver
-    memory::init(mbi_ptr); // memory subsystem
+    cpu::init(0);
+    console::init();
+    memory::init(mbi_ptr);
 }
