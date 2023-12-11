@@ -36,28 +36,20 @@ static TRAP_STACK: [u8; TRAP_STACK_SIZE] = [0; TRAP_STACK_SIZE];
 /// source our CPU frequency came from.
 #[derive(Debug, Clone, Copy)]
 pub enum CpuFrequency {
-    // Measures processor frequency directly from CPUID.
-    CpuId {
-        mhz: u16,
-    },
-
     /// Measured processor frequency from the TSC info MSR.
-    CpuIdTscInfo {
-        mhz: u16,
-    },
+    CpuIdTscInfo { hz: u64 },
 
     /// No valid way to measure processor frequency.
     Invalid,
 }
 
 impl CpuFrequency {
-    pub const fn frequency(&self) -> u16 {
+    pub const fn frequency(&self) -> u64 {
         use CpuFrequency::*;
 
         match *self {
-            CpuId { mhz } => mhz,
-            CpuIdTscInfo { mhz } => mhz,
-            Invalid => 2_000, // we guess the value at 2GHz
+            CpuIdTscInfo { hz } => hz,
+            Invalid => 2000000000, // we guess the value at 2GHz
         }
     }
 }
@@ -67,8 +59,6 @@ impl CpuFrequency {
 pub struct Cpu {
     id: usize,                  // logical identifier of core
     freq: CpuFrequency,         // frequency which timestamp counter runs at
-    ncli: u32,                  // depth of push_interrupt_off() nesting.
-    intena: bool,               // were interrupts enabled before push_interrupt_off()?
     tss: TaskStateSegment,      // task state segment
     gdt: GlobalDescriptorTable, // global descriptor table
 }
@@ -79,49 +69,14 @@ impl Cpu {
         Self {
             id: 0,
             freq: CpuFrequency::Invalid,
-            ncli: 0,
-            intena: false,
             tss: TaskStateSegment::new(),
             gdt: GlobalDescriptorTable::new(),
-        }
-    }
-    /// Turns off interrupts by pushing a request onto a stack.
-    /// Only when all requests have been popped off the stack are
-    /// they re-enabled (if they were enabled before being turned off).
-    #[inline]
-    pub fn push_interrupt_off(&mut self) {
-        let enabled = interrupts::are_enabled();
-        interrupts::disable();
-
-        if self.ncli == 0 {
-            self.intena = enabled;
-        }
-        self.ncli += 1;
-    }
-
-    /// Turns on interrupts by popping a request off a stack.
-    /// Only when all requests have been popped off the stack are
-    /// they re-enabled (only if there were enabled before being turned off).
-    #[inline]
-    pub fn pop_interrupt_off(&mut self) {
-        assert!(
-            !interrupts::are_enabled(),
-            "interrupts should have been disabled"
-        );
-        assert!(
-            self.ncli >= 1,
-            "trying to pop interrupt_off without any pushes"
-        );
-
-        self.ncli -= 1;
-        if self.ncli == 0 && self.intena {
-            interrupts::enable();
         }
     }
 
     /// Returns the processor frequency in megahertz (MHz).
     #[inline]
-    pub fn get_frequency(&self) -> u16 {
+    pub fn get_frequency(&self) -> u64 {
         self.freq.frequency()
     }
 
@@ -191,23 +146,12 @@ pub fn init(id: usize) {
     // for now just assume that the cpu has the tschz MSR.
     let cpuid: CpuId<CpuIdReaderNative> = CpuId::new();
 
-    let freq = cpuid.get_processor_frequency_info().map_or_else(
-        || {
-            cpuid
-                .get_tsc_info()
-                .map(|x| x.tsc_frequency())
-                .flatten()
-                .map_or_else(
-                    || CpuFrequency::Invalid,
-                    |v| CpuFrequency::CpuIdTscInfo {
-                        mhz: (v / 1000000u64) as u16,
-                    },
-                )
-        },
-        |v| CpuFrequency::CpuId {
-            mhz: v.processor_base_frequency(),
-        },
-    );
+    let freq = cpuid
+        .get_tsc_info()
+        .and_then(|x| x.tsc_frequency())
+        .map_or(CpuFrequency::Invalid, |v| CpuFrequency::CpuIdTscInfo {
+            hz: v,
+        });
 
     // Ensure processor interrupts are turned off.
     interrupts::disable();
@@ -217,9 +161,7 @@ pub fn init(id: usize) {
         CPUS[id] = Cpu {
             id,
             freq,
-            ncli: 0,
             gdt,
-            intena: false,
             tss,
         };
 

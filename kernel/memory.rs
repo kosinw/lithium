@@ -1,219 +1,263 @@
-pub mod framealloc {
-    use crate::arch::paging::Frame;
-    use crate::log;
-    use crate::multiboot::{InfoFlags, MemoryArea, MemoryAreaIter, MemoryAreaType, MultibootInfo};
-    use crate::spinlock::SpinMutex;
-    use core::ffi::CStr;
-    use core::mem::size_of;
+use x86_64::{PhysAddr, VirtAddr};
 
-    trait FrameAllocator {
-        fn allocate_frame(&mut self) -> Option<Frame>;
-        fn deallocate_frame(&mut self, frame: Frame);
-    }
+/// Maximum number of physical memory regions that can be used by physical allocator.
+const MAX_PHYS_REGIONS: usize = 16;
 
-    // TODO(kosinw): Replace this with a better allocator
-    #[derive(Debug, Clone)]
-    pub struct AreaFrameAllocator {
-        next_free_frame: Frame,
-        current_area: Option<&'static MemoryArea>,
-        areas: MemoryAreaIter,
-        kernel_start: Frame,
-        kernel_end: Frame,
-        multiboot_start: Frame,
-        multiboot_end: Frame,
-    }
+/// Represents a physical memory frame.
+///
+/// A `Frame` struct describes a contiguous block of physical memory, defined by its
+/// starting address (`start_address`) and size in bytes (`size`). It is used
+/// by the memory management system to track and allocate physical memory frames.
+///
+/// ## Usage
+///
+/// ```rust
+/// use lithium::memory::Frame;
+///
+/// // Create a new Frame with a starting address and size
+/// let frame = Frame {
+///     start_address: PhysAddr(0x1000),
+///     size: 4096,
+/// };
+/// ```
+pub(crate) struct Frame {
+    start_address: PhysAddr,
+    size: usize,
+}
 
-    static mut FRAME_ALLOCATOR: Option<SpinMutex<AreaFrameAllocator>> = None;
+/// Allocator for managing physical memory in the kernel.
+///
+/// It provides an interface to allocate and deallocate contiguous blocks of physical memory
+/// for use by the kernel.
+///
+/// The physical allocator uses a [bitmap allocation scheme](https://en.wikipedia.org/wiki/Free-space_bitmap)
+/// to allocate physical frames.
+///
+/// ## Usage
+///
+/// ```rust
+/// use lithium::memory::PhysicalAllocator;
+///
+/// // Initialize the physical memory allocator
+/// let mut allocator = PhysicalAllocator::new();
+///
+/// // Tell allocator there is free memory.
+/// allocator.reserve(start: 0x100000, size: 0x80000, block_size: 4096);
+///
+/// // Allocate a physical memory region.
+/// let region = allocator.allocate(4096).expect("Failed to allocate frame");
+///
+/// // Deallocate the region when no longer needed.
+/// allocator.deallocate(region);
+/// ```
+///
+#[derive(Debug)]
+pub(crate) struct PhysicalAllocator {
+    regions: [Option<PhysicalMemoryBitmap>; MAX_PHYS_REGIONS],
+}
 
-    impl AreaFrameAllocator {
-        pub fn new(
-            kernel_start: u64,
-            kernel_end: u64,
-            multiboot_start: u64,
-            multiboot_end: u64,
-            memory_areas: MemoryAreaIter,
-        ) -> AreaFrameAllocator {
-            let mut allocator = AreaFrameAllocator {
-                next_free_frame: Frame::containing_address(0),
-                current_area: None,
-                areas: memory_areas,
-                kernel_start: Frame::containing_address(kernel_start),
-                kernel_end: Frame::containing_address(kernel_end),
-                multiboot_start: Frame::containing_address(multiboot_start),
-                multiboot_end: Frame::containing_address(multiboot_end),
-            };
-            allocator.choose_next_area();
-            allocator
+impl PhysicalAllocator {
+    /// Creates a new physical frame allocator with default regions.
+    #[inline]
+    pub const fn new() -> Self {
+        const ARRAY_REPEAT_VALUE: Option<PhysicalMemoryBitmap> = None;
+
+        Self {
+            regions: [ARRAY_REPEAT_VALUE; MAX_PHYS_REGIONS],
         }
+    }
 
-        fn choose_next_area(&mut self) {
-            self.current_area = self
-                .areas
-                .clone()
-                .filter(|area| matches!(area.area_type, MemoryAreaType::Available))
-                .filter(|area| {
-                    let address = area.end_address();
-                    Frame::containing_address(address) >= self.next_free_frame // choose next frame greater than current next_free_frame
-                })
-                .min_by_key(|area| area.start_address());
+    /// Informs memory allocator about a new memory region from `start` to `start + size`.
+    pub fn reserve(&mut self, start: PhysAddr, size: usize, block_size: usize) {
+        // Find first unused region and mark that out.
+        if let Some(region) = self.regions.iter_mut().find(|i| i.is_none()) {
+            *region = Some(PhysicalMemoryBitmap::new(start, size, block_size));
+        } else {
+            panic!("Too many memory regions have been reserved. Can only reserve up to {MAX_PHYS_REGIONS}.");
+        }
+    }
 
-            if let Some(area) = self.current_area {
-                let start_frame = Frame::containing_address(area.addr);
-                if self.next_free_frame < start_frame {
-                    self.next_free_frame = start_frame;
+    /// Allocates a contiguous block of physical memory with the specified size.
+    pub fn allocate(&mut self, size: usize) -> Option<Frame> {
+        // Find first memory region that has memory available of that sized.
+        for region in self.regions.iter_mut().flatten() {
+            if region.bytes_remaining() >= size {
+                let blocks = region.bytes_to_blocks(size);
+
+                match region.allocate(blocks) {
+                    Some(addr) => return Some(addr),
+                    None => continue,
                 }
             }
         }
+
+        None
     }
 
-    impl FrameAllocator for AreaFrameAllocator {
-        fn allocate_frame(&mut self) -> Option<Frame> {
-            if let Some(area) = self.current_area {
-                // Clone the next free frame to return.
-                let frame = self.next_free_frame;
+    /// Gets the total number of bytes remaining in memory allocator.
+    pub fn bytes_remaining(&self) -> usize {
+        self.regions
+            .iter()
+            .filter_map(|x| x.as_ref())
+            .map(|x| x.bytes_remaining())
+            .sum()
+    }
 
-                // Get the last frame of the current area.
-                let current_area_last_frame = {
-                    let address = area.addr + area.len - 1;
-                    Frame::containing_address(address)
-                };
+    /// Deallocates a previously allocated physical memory region.
+    pub fn deallocate(&mut self, region: PhysAddr, size: u64) {
+        // Placeholder implementation
+        todo!()
+    }
+}
 
-                if frame > current_area_last_frame {
-                    // All the frames in the current area are used up, switch to the next one
-                    self.choose_next_area();
-                } else if frame >= self.kernel_start && frame < self.kernel_end {
-                    // Frame is being used by kernel, skip it for next frame.
-                    // Kernel must be page aligned so this should get the next frame.
-                    self.next_free_frame = self.kernel_end;
-                } else if frame >= self.multiboot_start && frame < self.multiboot_end {
-                    // Frame is being used by the multiboot info structure.
-                    // Multiboot is not necessarily page aligned so this should skip to the next frame.
-                    self.next_free_frame = self.multiboot_end.next_frame();
-                } else {
-                    // Frame is unused, just increment;
-                    self.next_free_frame = self.next_free_frame.next_frame();
-                    return Some(frame);
+fn to_virt(addr: PhysAddr) -> VirtAddr {
+    VirtAddr::new(addr.as_u64())
+}
+
+fn to_phys(addr: VirtAddr) -> PhysAddr {
+    PhysAddr::new(addr.as_u64())
+}
+
+#[derive(Debug)]
+#[repr(C, align(8))]
+struct PhysicalMemoryBitmap {
+    start_addr: PhysAddr,
+    size: usize,
+    block_size: usize,
+    blocks_remaining: usize,
+    reserved: usize,
+    bitmap: &'static mut [u8],
+}
+
+impl PhysicalMemoryBitmap {
+    fn new(start_addr: PhysAddr, size: usize, block_size: usize) -> Self {
+        debug_assert!(block_size.is_power_of_two());
+
+        let start_aligned = start_addr.align_up(block_size as u64);
+        let end_aligned = (start_addr + size).align_down(block_size as u64);
+
+        let aligned_size = (end_aligned - start_aligned) as usize;
+        let bitmap_size = aligned_size / block_size / 8;
+
+        let bitmap = unsafe {
+            core::slice::from_raw_parts_mut(to_virt(start_aligned).as_mut_ptr(), bitmap_size)
+        };
+
+        // Mark all regions as unused except for the regions currently occupied by the bitmap
+        bitmap.fill(0);
+
+        let mut bitmap_reserved_blocks = bitmap_size.next_multiple_of(block_size) / block_size;
+        let mut index = 0;
+
+        let reserved = bitmap_reserved_blocks;
+
+        while bitmap_reserved_blocks > 0 {
+            for bit in (0..=7) {
+                if bitmap_reserved_blocks > 0 {
+                    bitmap[index] |= 1 << bit;
+                    bitmap_reserved_blocks -= 1;
+                }
+            }
+
+            index += 1;
+        }
+
+        Self {
+            start_addr: start_aligned,
+            size: aligned_size,
+            block_size,
+            blocks_remaining: aligned_size - (reserved * block_size),
+            reserved,
+            bitmap,
+        }
+    }
+
+    fn bytes_remaining(&self) -> usize {
+        self.blocks_remaining * self.block_size
+    }
+
+    fn bytes_to_blocks(&self, size: usize) -> usize {
+        size.next_multiple_of(self.block_size) / self.block_size
+    }
+
+    fn bitmap_end(&self) -> usize {
+        self.bitmap.len() * 8
+    }
+
+    fn bitmap_start(&self) -> usize {
+        self.reserved
+    }
+
+    fn allocate(&mut self, blocks: usize) -> Option<Frame> {
+        let mut consecutive_blocks = 0;
+        let mut start_block = 0;
+
+        for i in self.bitmap_start()..self.bitmap_end() {
+            let bit = i & 7;
+            let entry = i >> 3;
+
+            if (self.bitmap[entry] & (1 << bit)) == 0 {
+                if consecutive_blocks == 0 {
+                    start_block = i;
                 }
 
-                // Frame was not in a valid spot so try again
-                self.allocate_frame()
+                consecutive_blocks += 1;
+
+                if consecutive_blocks == blocks {
+                    // Mark all consecutive blocks as allocated.
+                    for j in start_block..start_block + blocks {
+                        let bit = j & 7;
+                        let entry = j >> 3;
+
+                        self.bitmap[entry] |= 1 << bit;
+                    }
+
+                    self.blocks_remaining -= blocks;
+
+                    return Some(self.start_addr + (start_block * self.block_size));
+                }
             } else {
-                None // no frames left
+                consecutive_blocks = 0;
             }
         }
 
-        fn deallocate_frame(&mut self, _frame: Frame) {
-            todo!()
-        }
+        None
     }
 
-    pub fn init(mbi_ptr: *const MultibootInfo) {
-        let mbi = unsafe { &*mbi_ptr };
+    fn deallocate(&mut self, addr: PhysAddr, blocks: usize) {
+        let relative_addr = (addr - self.start_addr) as usize;
 
-        log!("found multiboot info at {mbi_ptr:016p}");
+        let start_block = relative_addr / self.block_size;
+        let end_block = start_block + blocks;
+        let block_range = start_block..end_block;
 
-        // Print out total amount of memory available.
-        if mbi.flags.contains(InfoFlags::MEMORY) {
-            // mem_lower and mem_upper are the total number of kilobytes available
-            let total_memory = (mbi.mem_lower + mbi.mem_upper) << 10;
-            log!("{total_memory} total bytes available",);
-        } else {
-            panic!("expected {:?} in multiboot info", InfoFlags::MEMORY);
-        }
-
-        // Print out name of boot loader.
-        if mbi.flags.contains(InfoFlags::BOOT_LOADER_NAME) {
-            let name = unsafe { CStr::from_ptr(mbi.boot_loader_name as *const i8) };
-            log!(r#"bootloader name: {name:?}"#);
-        }
-
-        // Print out kernel start and stop addresses
-        let kernel_start = unsafe { super::layout::__kernel_start.as_ptr() as u64 };
-        let kernel_end = unsafe { super::layout::__bss_end.as_ptr() as u64 };
-
-        log!(
-            "[{kernel_start:#016x}-{kernel_end:#016x}]{:indent$}KERNEL",
-            "",
-            indent = 13
+        debug_assert!(
+            start_block >= self.reserved,
+            "Cannot deallocate blocks used by bitmap."
         );
 
-        let multiboot_start = mbi_ptr as u64;
-        let multiboot_end = multiboot_start + (size_of::<MultibootInfo>() as u64);
-
-        log!(
-            "[{multiboot_start:#016x}-{multiboot_end:#016x}]{:indent$}MULTIBOOT",
-            "",
-            indent = 13
+        debug_assert!(
+            start_block < (self.start_addr.as_u64() + self.size) as usize,
+            "Deallocating invalid memory region."
         );
 
-        // Memmap flag must be set to read mbi.memory_areas().
-        if !mbi.flags.contains(InfoFlags::MEM_MAP) {
-            panic!("expected {:?} in multiboot info", InfoFlags::MEM_MAP);
-        }
+        debug_assert!(
+            end_block <= (self.start_addr.as_u64() + self.size) as usize,
+            "Deallocating invalid memory region."
+        );
 
-        // Print out memory areas
-        for area in mbi.memory_areas() {
-            // need { area.area_type } to make a copy, unaligned memory access bc of packing
-            let size_mb = area.size() as f64 / (1 << 20) as f64;
-            log!(
-                "[{:#016x}-{:#016x}] {:>10.2}M {}",
-                area.start_address(),
-                area.end_address() + 1,
-                size_mb,
-                { area.area_type }
+        for block in start_block..end_block {
+            let entry = block >> 3;
+            let bit = block & 7;
+
+            assert!(
+                self.bitmap[entry] & (1 << bit),
+                "Deallocating block that was not held before."
             );
+
+            self.bitmap[entry] &= !(1 << bit);
         }
 
-        // Create allocator.
-        let allocator = AreaFrameAllocator::new(
-            kernel_start,
-            kernel_end,
-            multiboot_start,
-            multiboot_end,
-            mbi.memory_areas(),
-        );
-
-        unsafe {
-            FRAME_ALLOCATOR = Some(SpinMutex::new("framealloc", allocator));
-        }
+        self.blocks_remaining += blocks;
     }
-
-    /// This function can only be called after framealloc::init.
-    /// Requests global frame allocator and passes it into a thunk.
-    pub fn with_allocator<U, F: FnMut(&mut AreaFrameAllocator) -> U>(thunk: F) -> Option<U> {
-        if let Some(lock) = unsafe { &FRAME_ALLOCATOR } {
-            Some(lock.with_lock(thunk))
-        } else {
-            None
-        }
-    }
-}
-
-pub mod layout {
-    use crate::arch::paging::PageTable;
-
-    // Physical memory layout
-
-    // qemu -machine microvm is set up like this,
-    // based on qemu's include/hw/i386/microvm.h
-    //
-    // [0x00000000000000-0x0000000009fc00] -- AVAILABLE "low" usable RAM
-    // [0x0000000009fc00-0x000000000a0000] -- RESERVED  extended BIOS data area
-    // [0x000000000a0000-0x000000000e0000] -- RESERVED  video memory
-    // [0x000000000e0000-0x00000000100000] -- RESERVED  motherboard BIOS
-    // [0x00000000100000-0x0000001ffff000] -- AVAILABLE "high" usable RAM
-    // [0x0000001ffff000-0x00000020000000] -- RESERVED  memory mapped PCI devices
-    // [0x000000fffc0000-0x00000100000000] -- RESERVED  memory mapped PCI devices
-
-    extern "C" {
-        pub static __kernel_start: [u64; 0];
-        pub static __bss_end: [u64; 0];
-        pub static stack0: [u64; 0];
-        pub static STACKSIZE: usize;
-    }
-}
-
-pub mod vm {
-
-    pub fn init() {}
 }

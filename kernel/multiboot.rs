@@ -4,6 +4,8 @@ use core::mem::size_of;
 
 use bitflags::bitflags;
 
+use x86_64::PhysAddr;
+
 bitflags! {
     /// Flags for multiboot info structure.
     #[derive(Debug, Clone, Copy)]
@@ -52,26 +54,26 @@ impl fmt::Display for MemoryAreaType {
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct MemoryArea {
-    pub size: u32,
-    pub addr: u64,
-    pub len: u64,
-    pub area_type: MemoryAreaType,
+    size: u32,
+    addr: u64,
+    len: u64,
+    area_type: MemoryAreaType,
 }
 
 impl MemoryArea {
     /// The start address of the memory region.
-    pub fn start_address(&self) -> u64 {
-        self.addr
+    pub fn start_address(&self) -> PhysAddr {
+        PhysAddr::new(self.addr).align_up(4096u64)
     }
 
     /// The end address of the memory region.
-    pub fn end_address(&self) -> u64 {
-        (self.addr + self.len).checked_sub(1).unwrap_or(0)
+    pub fn end_address(&self) -> PhysAddr {
+        PhysAddr::new(self.addr + self.len).align_down(4096u64)
     }
 
     /// The size, in bytes, of the memory region.
-    pub fn size(&self) -> u64 {
-        self.len
+    pub fn size(&self) -> usize {
+        self.len as usize
     }
 
     /// The type of the memory region.
@@ -82,7 +84,7 @@ impl MemoryArea {
 
 #[repr(C, align(4))]
 #[derive(Debug, Clone)]
-pub struct MultibootInfo {
+pub struct MultibootInformation {
     pub flags: InfoFlags,
     pub mem_lower: u32,
     pub mem_upper: u32,
@@ -90,7 +92,7 @@ pub struct MultibootInfo {
     pub cmdline: u32,
     pub mods_count: u32,
     pub mods_addr: u32,
-    _unused0: [u32; 4], // todo(kosinw): implement this later
+    _unused0: [u32; 4],
     pub mmap_length: u32,
     pub mmap_addr: u32,
     pub drives_length: u32,
@@ -100,7 +102,7 @@ pub struct MultibootInfo {
     _unused2: [u16; 10],
 }
 
-impl MultibootInfo {
+impl MultibootInformation {
     /// Return iterator over all memory areas.
     /// Must check flags to see if MEM_MAP is present otherwise function will panic.
     pub fn memory_areas(&self) -> MemoryAreaIter {

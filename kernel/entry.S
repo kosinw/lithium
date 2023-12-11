@@ -97,7 +97,7 @@ _start64:
     ; Setup the 64-bit stack register.
     mov     rsp, stack0 + STACKSIZE
 
-    ; Set rip to be the address of higher half kernel.
+    ; Set rip to be 64-bit address.
     mov     rax, qword .1
     push    qword rax
     ret

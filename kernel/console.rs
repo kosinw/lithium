@@ -50,15 +50,10 @@ pub(crate) mod uart {
         }
     }
 
-    pub fn locked_print(args: core::fmt::Arguments) {
+    pub fn print(args: core::fmt::Arguments) {
         unsafe {
             UART.lock().write_fmt(args).unwrap();
         }
-    }
-
-    // do not acquire lock in case panic was caused by locking issues
-    pub fn print(args: core::fmt::Arguments) {
-        SerialPort::new(COM1).write_fmt(args).unwrap()
     }
 
     fn outb(port: u16, v: u8) {
@@ -191,8 +186,7 @@ static mut CONSOLE: Mutex<Console> = Mutex::new(Console {
 pub fn init() {
     uart::init();
     crate::print!("\x1bc"); // clears the screen
-    crate::println!("lithium kernel is booting...\n");
-    crate::log!("OK!");
+    crate::log!("Kernel started");
 }
 
 pub fn print(args: core::fmt::Arguments) {
@@ -200,18 +194,10 @@ pub fn print(args: core::fmt::Arguments) {
 }
 
 #[macro_export]
-macro_rules! kprint {
+macro_rules! print {
     ($($args:tt)*) => ({
         use $crate::console::uart::print;
         print(format_args!($($args)*));
-    })
-}
-
-#[macro_export]
-macro_rules! print {
-    ($($args:tt)*) => ({
-        use $crate::console::uart::locked_print;
-        locked_print(format_args!($($args)*));
     })
 }
 
@@ -231,10 +217,9 @@ macro_rules! log {
             const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";
             let ticks = cpu::ticks();
             let id = cpu::id();
-            let this_file = file!();
             $crate::print!("{ANSI_FOREGROUND_YELLOW}[{ticks: >13.6}]{ANSI_CLEAR} ");
             $crate::print!("{ANSI_FOREGROUND_CYAN}");
-            $crate::print!("{this_file:<22.22}");
+            $crate::print!("{}:{} ", file!(), line!());
             $crate::print!("{ANSI_CLEAR}");
             $crate::println!("[cpu{id}] {}", format_args!($($arg)*));
         }

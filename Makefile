@@ -32,14 +32,13 @@ OBJFILES := $(addprefix target/obj/, $(ASMFILES:.S=.S.o))
 HEADER_DEPS := $(addprefix target/obj/,$(ASMFILES:.S=.S.d))
 
 # Options for running the QEMU emulator.
-QEMUOPTS := -machine microvm,acpi=off,ioapic2=off
+QEMUOPTS := -machine q35
 QEMUOPTS += -no-reboot -nodefaults
 QEMUOPTS += -serial mon:stdio
 QEMUOPTS += -device isa-debug-exit,iobase=0x604,iosize=0x04
 QEMUOPTS += -nographic
 QEMUOPTS += -cpu qemu64,fsgsbase,msr -m 512M
-QEMUOPTS += -netdev user,id=net0,hostfwd=tcp::5555-:5555
-QEMUOPTS += -device virtio-net-device,netdev=net0
+QEMUOPTS += -nic user,model=virtio-net-pci
 QEMUOPTS += -d int
 
 # Default target.
@@ -92,7 +91,7 @@ target/obj/kernel.o: $(RUSTFILES) Makefile
 	--profile $(PROFILE) \
 	-Z build-std-features=compiler-builtins-mem \
 	-Z build-std=alloc,core,compiler_builtins
-	cp target/lithium/$(PROFILE_DIR)/libkernel.a $@
+	cp target/lithium/$(PROFILE_DIR)/liblithium.a $@
 
 # Compilation rules for *.S files.
 target/obj/%.S.o: kernel/%.S Makefile
