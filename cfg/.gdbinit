@@ -6,5 +6,5 @@ set disassembly-flavor intel
 
 target remote localhost:1234
 
-br memory.rs:566
+br memory.rs:419
 c

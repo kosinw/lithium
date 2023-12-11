@@ -24,7 +24,11 @@ use x86_64::{PhysAddr, VirtAddr};
 const MAX_PHYS_REGIONS: usize = 16;
 
 /// Offset where 4GiB of physical memory is identity mapped to.
-const HIGH_HALF_DIRECT_MAP: u64 = 0xFFFF800000000000u64;
+pub const HIGH_HALF_DIRECT_MAP: u64 = 0xFFFF800000000000u64;
+
+// Offset where heap starts.
+pub const HEAP_START: u64 = 0x444444440000u64;
+pub const HEAP_SIZE: u64 = 1024 * 1024; // 1 MiB.
 
 /// Physical frame allocator. Responsible for allocating physical frames for virtual memory manager.
 static mut FRAME_ALLOCATOR: Mutex<PhysicalAllocator> = Mutex::new(PhysicalAllocator::new());
@@ -32,30 +36,14 @@ static mut FRAME_ALLOCATOR: Mutex<PhysicalAllocator> = Mutex::new(PhysicalAlloca
 // Kernel page table.
 static mut KERNEL_PAGETABLE: Mutex<PageTable> = Mutex::new(PageTable::new());
 
-/// Represents a physical memory frame.
-///
-/// A `Frame` struct describes a contiguous block of physical memory, defined by its
-/// starting address (`start_address`) and size in bytes (`size`). It is used
-/// by the memory management system to track and allocate physical memory frames.
-///
-/// ## Usage
-///
-/// ```rust
-/// use lithium::memory::Frame;
-///
-/// // Create a new Frame with a starting address and size
-/// let frame = Frame {
-///     start_address: PhysAddr(0x1000),
-///     size: 4096,
-/// };
-/// ```
+/// Represents a physical memory region.
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct Frame {
+pub struct PhysRegion {
     start_address: PhysAddr,
     size: usize,
 }
 
-impl Frame {
+impl PhysRegion {
     /// Gets the starting address of the physical frame.
     pub fn start_address(&self) -> PhysAddr {
         self.start_address
@@ -66,8 +54,12 @@ impl Frame {
         self.start_address + self.size
     }
 
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
     /// Checks if the current frame intersects with another frame.
-    pub fn intersects(&self, other: &Frame) -> bool {
+    pub fn intersects(&self, other: &PhysRegion) -> bool {
         let self_end_address = (self.start_address.as_u64() as usize) + self.size;
         let other_end_address = (other.start_address.as_u64() as usize) + other.size;
 
@@ -77,7 +69,7 @@ impl Frame {
     }
 }
 
-impl<S: PageSize> From<PhysFrame<S>> for Frame {
+impl<S: PageSize> From<PhysFrame<S>> for PhysRegion {
     fn from(value: PhysFrame<S>) -> Self {
         Self {
             start_address: value.start_address(),
@@ -86,10 +78,10 @@ impl<S: PageSize> From<PhysFrame<S>> for Frame {
     }
 }
 
-impl<S: PageSize> TryFrom<Frame> for PhysFrame<S> {
+impl<S: PageSize> TryFrom<PhysRegion> for PhysFrame<S> {
     type Error = AddressNotAligned;
 
-    fn try_from(value: Frame) -> Result<Self, Self::Error> {
+    fn try_from(value: PhysRegion) -> Result<Self, Self::Error> {
         Self::from_start_address(value.start_address())
     }
 }
@@ -121,7 +113,7 @@ impl<S: PageSize> TryFrom<Frame> for PhysFrame<S> {
 /// ```
 ///
 #[derive(Debug)]
-pub(crate) struct PhysicalAllocator {
+pub struct PhysicalAllocator {
     regions: [Option<PhysicalMemoryBitmap>; MAX_PHYS_REGIONS],
 }
 
@@ -147,7 +139,7 @@ impl PhysicalAllocator {
     }
 
     /// Allocates a contiguous block of physical memory with the specified size.
-    pub fn allocate(&mut self, size: usize) -> Option<Frame> {
+    pub fn allocate(&mut self, size: usize) -> Option<PhysRegion> {
         // Find first memory region that has memory available of that sized.
         for region in self.regions.iter_mut().flatten() {
             if region.bytes_remaining() >= size {
@@ -173,7 +165,7 @@ impl PhysicalAllocator {
     }
 
     /// Deallocates a previously allocated physical memory region.
-    pub fn deallocate(&mut self, frame: Frame) {
+    pub fn deallocate(&mut self, frame: PhysRegion) {
         // Placeholder implementation
         for region in self.regions.iter_mut().flatten() {
             if region.try_deallocate(frame) {
@@ -278,7 +270,7 @@ impl PhysicalMemoryBitmap {
         self.size / self.block_size
     }
 
-    fn contains_frame(&self, frame: Frame) -> bool {
+    fn contains_frame(&self, frame: PhysRegion) -> bool {
         let start_block = ((frame.start_address - self.start_addr) as usize) / self.block_size;
         let blocks = frame.size.next_multiple_of(self.block_size) / self.block_size;
         let end_block = start_block + blocks;
@@ -286,7 +278,7 @@ impl PhysicalMemoryBitmap {
         (start_block < self.total_blocks()) && (end_block <= self.total_blocks())
     }
 
-    fn allocate(&mut self, blocks: usize) -> Option<Frame> {
+    fn allocate(&mut self, blocks: usize) -> Option<PhysRegion> {
         let mut consecutive_blocks = 0;
         let mut start_block = 0;
 
@@ -312,7 +304,7 @@ impl PhysicalMemoryBitmap {
 
                     self.blocks_remaining -= blocks;
 
-                    return Some(Frame {
+                    return Some(PhysRegion {
                         start_address: self.start_addr + (start_block * self.block_size),
                         size: blocks * self.block_size,
                     });
@@ -325,7 +317,7 @@ impl PhysicalMemoryBitmap {
         None
     }
 
-    fn try_deallocate(&mut self, frame: Frame) -> bool {
+    fn try_deallocate(&mut self, frame: PhysRegion) -> bool {
         let addr = frame.start_address;
         let blocks: usize = frame.size.next_multiple_of(self.block_size) / self.block_size;
         let relative_addr = (addr - self.start_addr) as usize;
@@ -366,20 +358,23 @@ impl PhysicalMemoryBitmap {
 /// The size parameter determines the length of the memory region to be mapped.
 ///
 /// This function does not flush the TLB.
-pub unsafe fn mappages<S: PageSize>(
+unsafe fn map_pages_with_pgtbl<S: PageSize>(
     pgtbl: &mut impl Mapper<S>,
     va: VirtAddr,
     pa: PhysAddr,
     size: u64,
     flags: PageTableFlags,
 ) -> Result<(), MapToError<S>> {
-    let start_page: Page<S> = Page::containing_address(va);
-    let end_page: Page<S> = Page::containing_address(va + size);
-
     let mut alloc = FRAME_ALLOCATOR.lock();
 
-    for page in Page::range(start_page, end_page) {
-        let frame_addr = pa + (page - start_page);
+    let page_range = {
+        let start_page: Page<S> = Page::containing_address(va);
+        let end_page: Page<S> = Page::containing_address(va + size);
+        Page::range(start_page, end_page)
+    };
+
+    for page in page_range {
+        let frame_addr = pa + (page - page_range.start);
         let frame = PhysFrame::containing_address(frame_addr);
 
         let _ = pgtbl.map_to(page, frame, flags, alloc.deref_mut())?;
@@ -395,7 +390,7 @@ pub unsafe fn mappages<S: PageSize>(
 /// The size parameter determines the length of the memory region to be mapped.
 ///
 /// This function does not flush the TLB.
-pub unsafe fn kvmmap<S: PageSize>(
+pub unsafe fn map_pages<S: PageSize>(
     va: VirtAddr,
     pa: PhysAddr,
     size: u64,
@@ -406,7 +401,13 @@ where
 {
     let mut kpgtbl = KERNEL_PAGETABLE.lock();
     let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_DIRECT_MAP));
-    mappages(&mut mapper, va, pa, size, flags)
+    map_pages_with_pgtbl(&mut mapper, va, pa, size, flags)
+}
+
+/// Allocates a contiguous physical region with the specified size.
+pub unsafe fn allocate_physical_region(size: usize) -> Option<PhysRegion> {
+    let mut frame_allocator = FRAME_ALLOCATOR.lock();
+    frame_allocator.allocate(size)
 }
 
 /// Initializes the memory subsystem of the kernel.
@@ -469,7 +470,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
     }
 
     // Keep track of kernel frame so we don't give it to the allocator.
-    let kernel_frame = Frame {
+    let kernel_frame = PhysRegion {
         start_address: PhysAddr::new(kernel_start as u64),
         size: (kernel_end - kernel_start).next_multiple_of(4096),
     };
@@ -480,7 +481,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
     {
         let mut start = area.start_address();
         let mut size = area.size();
-        let frame = Frame {
+        let frame = PhysRegion {
             start_address: start,
             size,
         };
@@ -521,24 +522,25 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         let mut mapper = OffsetPageTable::new(kpgtbl.deref_mut(), VirtAddr::zero());
 
         // map physical memory into higher half address
-        mappages::<Size1GiB>(
+        map_pages_with_pgtbl::<Size1GiB>(
             &mut mapper,
             VirtAddr::new(HIGH_HALF_DIRECT_MAP),
             PhysAddr::zero(),
             Size1GiB::SIZE * 4,
             PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
         )
-        .unwrap();
+        .expect("failed to map higher half direct map");
 
-        // identity map first four GiB (TODO(kosinw): Make this a more fine grained page table)
-        mappages::<Size1GiB>(
+        // identity map first four GiB
+        // TODO(kosinw): Make this a more fine grained page table)
+        map_pages_with_pgtbl::<Size1GiB>(
             &mut mapper,
             VirtAddr::zero(),
             PhysAddr::zero(),
             Size1GiB::SIZE * 4,
             PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
         )
-        .unwrap();
+        .expect("failed to identity map first 4 GiB");
 
         let new_page_table = kpgtbl.deref() as *const PageTable as u64;
 

@@ -55,7 +55,7 @@ _start:
     mov     esp, stack0 + STACKSIZE
 
     ; Setup identity paging before entering long mode.
-    ; We identity map the first 1GiB into the page table (512 PTEs * 2 MiB).
+    ; We identity map the first 1GiB into the page table by using a giant page.
     mov     eax, bootpgtbl
     mov     cr3, eax
 
@@ -124,17 +124,16 @@ bootpgtbl:
 
 align PAGESIZE
 bootpgtbl3:
-    dq      (bootpgtbl2) + (PAGE_WRITABLE | PAGE_PRESENT)
+    dq      (0 << 20) + (PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
     resb    PAGESIZE - 8
 
-align PAGESIZE
-bootpgtbl2:
-    dq      (0 << 20) + (PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
-%assign i 1
-%rep 511
-    dq      ((2*i) << 20) + (PAGE_NX | PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
-%assign i i+1
-%endrep
+; align PAGESIZE
+; bootpgtbl2:
+; %assign i 0
+; %rep 512
+;     dq      ((2*i) << 20) + (PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
+; %assign i i+1
+; %endrep
 
 align 16
 bootgdt:

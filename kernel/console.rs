@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-pub(crate) mod uart {
+pub mod uart {
     use bitflags::bitflags;
     use core::fmt::Write;
     use spin::Mutex;
