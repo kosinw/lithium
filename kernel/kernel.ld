@@ -14,7 +14,6 @@ SECTIONS
         *(.trap)
         . = ALIGN(4096);
     }
-    PROVIDE(__text_end = .);
 
     .rodata  BLOCK(4096) : ALIGN(4096)
     {
@@ -22,6 +21,7 @@ SECTIONS
         . = ALIGN(4096);
     }
 
+    PROVIDE(__data_start = .);
     .data BLOCK(4096) : ALIGN(4096)
     {
         *(.data .data.*)
@@ -35,12 +35,12 @@ SECTIONS
         . = ALIGN(4096);
     }
 
-    . = ALIGN(4096);
-
-    /DISCARD/ : {
+    /DISCARD/ BLOCK(0x100000) : ALIGN(0x100000) {
         *(.eh_frame)
         *(.note .note.*)
     }
+
+    . = ALIGN(0x100000);
 
     PROVIDE(__kernel_end = .);
 }

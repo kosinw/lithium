@@ -9,10 +9,7 @@ mod heap;
 mod memory;
 mod multiboot;
 mod runtime;
-
-use multiboot::MultibootInformation;
-
-use alloc::vec;
+mod trap;
 
 /// Entrypoint for lithium kernel.
 ///
@@ -20,14 +17,15 @@ use alloc::vec;
 /// related to memory management and drivers before transferring control to the
 /// linked unikernel application.
 #[no_mangle]
-pub extern "C" fn kernel_main(mbi_ptr: *const MultibootInformation) {
+pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) {
+    use alloc::vec;
+
     cpu::init(0);
     console::init();
     memory::init(mbi_ptr);
     heap::init();
 
-    for i in 0..10 {
-        let test = vec![i*3, i*3+1, i*3+2];
-        log!("my vectors :) {:?} {:016p}", test, test.as_ptr());
-    }
+    let v = vec![1,2,3,4,5];
+    crate::log!("vec!!!! {:?}", v);
+    // trap::init();
 }

@@ -17,7 +17,8 @@ use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::PageTable;
 use x86_64::structures::paging::PageTableFlags;
 use x86_64::structures::paging::PhysFrame;
-use x86_64::structures::paging::Size1GiB;
+use x86_64::structures::paging::Size2MiB;
+use x86_64::structures::paging::{Size1GiB, Size4KiB};
 use x86_64::{PhysAddr, VirtAddr};
 
 /// Maximum number of physical memory regions that can be used by physical allocator.
@@ -190,10 +191,6 @@ impl<S: PageSize> FrameDeallocator<S> for PhysicalAllocator {
     }
 }
 
-fn to_virt(addr: PhysAddr) -> VirtAddr {
-    VirtAddr::new(addr.as_u64())
-}
-
 #[derive(Debug)]
 #[repr(C, align(8))]
 struct PhysicalMemoryBitmap {
@@ -216,7 +213,8 @@ impl PhysicalMemoryBitmap {
         let bitmap_size = aligned_size / block_size / 8;
 
         let bitmap = unsafe {
-            core::slice::from_raw_parts_mut(to_virt(start_aligned).as_mut_ptr(), bitmap_size)
+            let virt = VirtAddr::new(start_aligned.as_u64());
+            core::slice::from_raw_parts_mut(virt.as_mut_ptr(), bitmap_size)
         };
 
         // Mark all regions as unused except for the regions currently occupied by the bitmap
@@ -351,6 +349,42 @@ impl PhysicalMemoryBitmap {
     }
 }
 
+extern "C" {
+    static __kernel_start: [usize; 0];
+    static __data_start: [usize; 0];
+    static __kernel_end: [usize; 0];
+}
+
+/// Represents important locations in physical address space.
+pub struct PhysicalMemoryLayout {
+    kernel_start: PhysAddr,
+    data_start: PhysAddr,
+    kernel_end: PhysAddr,
+    phys_stop: PhysAddr,
+    device_start: PhysAddr,
+}
+
+impl PhysicalMemoryLayout {
+    #[inline]
+    pub fn new() -> Self {
+        unsafe {
+            let kernel_start = __kernel_start.as_ptr() as u64;
+            let data_start = __data_start.as_ptr() as u64;
+            let kernel_end = __kernel_end.as_ptr() as u64;
+            let phys_stop = 0xE000000u64;
+            let device_start = 0xFE000000u64;
+
+            Self {
+                kernel_start: PhysAddr::new(kernel_start),
+                data_start: PhysAddr::new(data_start),
+                kernel_end: PhysAddr::new(kernel_end),
+                phys_stop: PhysAddr::new(phys_stop),
+                device_start: PhysAddr::new(device_start),
+            }
+        }
+    }
+}
+
 /// Maps a region of memory in a page table.
 ///
 /// This function takes a virtual address, physical address, and size as parameters
@@ -358,7 +392,7 @@ impl PhysicalMemoryBitmap {
 /// The size parameter determines the length of the memory region to be mapped.
 ///
 /// This function does not flush the TLB.
-unsafe fn map_pages_with_pgtbl<S: PageSize>(
+unsafe fn map_virtual_region_with_pgtbl<S: PageSize>(
     pgtbl: &mut impl Mapper<S>,
     va: VirtAddr,
     pa: PhysAddr,
@@ -374,7 +408,13 @@ unsafe fn map_pages_with_pgtbl<S: PageSize>(
     };
 
     for page in page_range {
-        let frame_addr = pa + (page - page_range.start);
+        let frame_addr = pa + (page.start_address() - page_range.start.start_address());
+        // log!(
+        //     "virt_addr={:#016x}, phys_addr={:#016x}, size={:#016x}, flags={flags:?}",
+        //     page.start_address().as_u64(),
+        //     frame_addr.as_u64(),
+        //     S::SIZE
+        // );
         let frame = PhysFrame::containing_address(frame_addr);
 
         let _ = pgtbl.map_to(page, frame, flags, alloc.deref_mut())?;
@@ -390,7 +430,7 @@ unsafe fn map_pages_with_pgtbl<S: PageSize>(
 /// The size parameter determines the length of the memory region to be mapped.
 ///
 /// This function does not flush the TLB.
-pub unsafe fn map_pages<S: PageSize>(
+pub unsafe fn map_virtual_region<S: PageSize>(
     va: VirtAddr,
     pa: PhysAddr,
     size: u64,
@@ -401,7 +441,7 @@ where
 {
     let mut kpgtbl = KERNEL_PAGETABLE.lock();
     let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_DIRECT_MAP));
-    map_pages_with_pgtbl(&mut mapper, va, pa, size, flags)
+    map_virtual_region_with_pgtbl(&mut mapper, va, pa, size, flags)
 }
 
 /// Allocates a contiguous physical region with the specified size.
@@ -417,6 +457,7 @@ pub unsafe fn allocate_physical_region(size: usize) -> Option<PhysRegion> {
 /// necessary resources, and prepares the system for memory management operations.
 pub fn init(mbi_ptr: *const MultibootInformation) {
     let mbi = unsafe { mbi_ptr.as_ref().unwrap() };
+    let layout = PhysicalMemoryLayout::new();
 
     log!("memory::init(): found multiboot structure at {:016p}", mbi);
 
@@ -432,22 +473,10 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         log!("memory::init(): {total_memory} bytes available");
     }
 
-    let kernel_start: usize = unsafe {
-        let result;
-        core::arch::asm!("lea {}, __kernel_start", out(reg) result);
-        result
-    };
-
-    let kernel_end: usize = unsafe {
-        let result;
-        core::arch::asm!("lea {}, __kernel_end", out(reg) result);
-        result
-    };
-
     log!(
         "memory::init(): kernel is between {:#016x} and {:#016x}",
-        kernel_start,
-        kernel_end
+        layout.kernel_start.as_u64(),
+        layout.kernel_end.as_u64()
     );
 
     // Panic if memory map is not available.
@@ -471,8 +500,8 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
 
     // Keep track of kernel frame so we don't give it to the allocator.
     let kernel_frame = PhysRegion {
-        start_address: PhysAddr::new(kernel_start as u64),
-        size: (kernel_end - kernel_start).next_multiple_of(4096),
+        start_address: layout.kernel_start,
+        size: (layout.kernel_end - layout.kernel_start) as usize,
     };
 
     for area in mbi
@@ -491,10 +520,9 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
             size = (frame.end_address() - start) as usize;
         }
 
-        // NOTE(kosinw): Rust does not like address zero, so we skip page 0!
-        if frame.start_address() == PhysAddr::zero() {
-            start = (frame.start_address() + 1u64).align_up(4096u64);
-            size = (frame.end_address() - start) as usize;
+        // NOTE(kosinw): Skip memory below the kernel
+        if frame.start_address() < layout.kernel_start {
+            continue;
         }
 
         // TODO(kosinw): Maybe change this number dynamically to something else?
@@ -521,8 +549,8 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         // Later when we modify the page table kernel it will be based on HIGH_HALF_DIRECT_MAP.
         let mut mapper = OffsetPageTable::new(kpgtbl.deref_mut(), VirtAddr::zero());
 
-        // map physical memory into higher half address
-        map_pages_with_pgtbl::<Size1GiB>(
+        // map 4 GiB physical memory into higher half address
+        map_virtual_region_with_pgtbl::<Size1GiB>(
             &mut mapper,
             VirtAddr::new(HIGH_HALF_DIRECT_MAP),
             PhysAddr::zero(),
@@ -531,24 +559,51 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         )
         .expect("failed to map higher half direct map");
 
-        // identity map first four GiB
-        // TODO(kosinw): Make this a more fine grained page table)
-        map_pages_with_pgtbl::<Size1GiB>(
+        // identity map up to kernel_start
+        // map_virtual_region_with_pgtbl::<Size4KiB>(
+        //     &mut mapper,
+        //     VirtAddr::zero(),
+        //     PhysAddr::zero(),
+        //     layout.kernel_start.as_u64(),
+        //     PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
+        // )
+        // .expect("failed to identity map region before kernel");
+
+        // identity map text section of kernel with execute and no write
+        map_virtual_region_with_pgtbl::<Size4KiB>(
             &mut mapper,
-            VirtAddr::zero(),
-            PhysAddr::zero(),
-            Size1GiB::SIZE * 4,
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+            VirtAddr::new(layout.kernel_start.as_u64()),
+            layout.kernel_start,
+            layout.data_start - layout.kernel_start,
+            PageTableFlags::PRESENT,
         )
-        .expect("failed to identity map first 4 GiB");
+        .expect("failed to identity map .text section of kernel");
+
+        // identity map rest of kernel with read and write
+        map_virtual_region_with_pgtbl::<Size4KiB>(
+            &mut mapper,
+            VirtAddr::new(layout.data_start.as_u64()),
+            layout.data_start,
+            layout.kernel_end.align_up(Size2MiB::SIZE) - layout.data_start,
+            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
+        )
+        .expect("failed to identity map kernel and physical memory");
+
+        // identity map rest of kernel with read and write
+        map_virtual_region_with_pgtbl::<Size2MiB>(
+            &mut mapper,
+            VirtAddr::new(layout.kernel_end.align_up(Size2MiB::SIZE).as_u64()),
+            layout.kernel_end.align_up(Size2MiB::SIZE),
+            layout.phys_stop - layout.kernel_end.align_up(Size2MiB::SIZE),
+            PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE | PageTableFlags::WRITABLE,
+        )
+        .expect("failed to identity map kernel and physical memory");
 
         let new_page_table = kpgtbl.deref() as *const PageTable as u64;
+        let page_table_frame = PhysFrame::containing_address(PhysAddr::new(new_page_table));
 
         let (_, flags) = Cr3::read();
-        Cr3::write(
-            PhysFrame::containing_address(PhysAddr::new(new_page_table)),
-            flags,
-        );
+        Cr3::write(page_table_frame, flags);
     }
 
     let (frame, _) = Cr3::read();

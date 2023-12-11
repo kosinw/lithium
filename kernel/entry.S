@@ -127,14 +127,6 @@ bootpgtbl3:
     dq      (0 << 20) + (PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
     resb    PAGESIZE - 8
 
-; align PAGESIZE
-; bootpgtbl2:
-; %assign i 0
-; %rep 512
-;     dq      ((2*i) << 20) + (PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
-; %assign i i+1
-; %endrep
-
 align 16
 bootgdt:
     dq      0   ; zero entry
