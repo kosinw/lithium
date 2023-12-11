@@ -522,7 +522,8 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         result
     };
 
-    log!("memory::init(): currently using bootloader page table at {bootpgtbl:#016x}");
+    let (frame, _) = Cr3::read();
+    log!("memory::init(): currently using bootloader page table at {:#016x}", frame.start_address().as_u64());
 
     unsafe {
         let mut kpgtbl = KERNEL_PAGETABLE.lock();
@@ -553,28 +554,6 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         )
         .unwrap();
 
-        // identity map kernel data as read and writable
-        // mappages::<Size4KiB>(
-        //     &mut mapper,
-        //     VirtAddr::new(text_end as u64),
-        //     PhysAddr::new(text_end as u64),
-        //     (PHYSIZE as usize - text_end) as u64,
-        //     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
-        // )
-        // .unwrap();
-
-        // // map the lowest 1MiB as readable and writable
-        // mappages::<Size4KiB>(
-        //     &mut mapper,
-        //     VirtAddr::new(0),
-        //     PhysAddr::new(0),
-        //     0x100000u64,
-        //     PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE,
-        // )
-        // .unwrap();
-
-        // map every above the kernel as readable and writeable
-
         let new_page_table = kpgtbl.deref() as *const PageTable as u64;
 
         let (_, flags) = Cr3::read();
@@ -583,4 +562,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
             flags,
         );
     }
+
+    let (frame, _) = Cr3::read();
+    log!("memory::init(): now using kernel page table at {:#016x}", frame.start_address().as_u64());
 }
