@@ -186,7 +186,8 @@ static mut CONSOLE: Mutex<Console> = Mutex::new(Console {
 pub fn init() {
     uart::init();
     crate::print!("\x1bc"); // clears the screen
-    crate::log!("Kernel started");
+    crate::println!();
+    crate::log!("lithium kernel is booting");
 }
 
 pub fn print(args: core::fmt::Arguments) {
@@ -219,7 +220,7 @@ macro_rules! log {
             let id = cpu::id();
             $crate::print!("{ANSI_FOREGROUND_YELLOW}[{ticks: >13.6}]{ANSI_CLEAR} ");
             $crate::print!("{ANSI_FOREGROUND_CYAN}");
-            $crate::print!("{}:{} ", file!(), line!());
+            $crate::print!("{0: <20} | line {1: <5} | ", file!(), line!());
             $crate::print!("{ANSI_CLEAR}");
             $crate::println!("[cpu{id}] {}", format_args!($($arg)*));
         }

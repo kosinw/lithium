@@ -11,13 +11,11 @@ fn panic(info: &PanicInfo) -> ! {
     const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";
     const ANSI_CLEAR: &str = "\x1b[0m";
 
-    print!("\x1bc");
+    // print!("\x1bc");
     print!("{ANSI_FOREGROUND_RED}[        panic]{ANSI_CLEAR} ");
 
     if let Some(location) = info.location() {
-        let file_location = location.file();
-        print!("{ANSI_FOREGROUND_CYAN}{file_location:<22.22}{ANSI_CLEAR}");
-        print!("{}:{} ", location.file(), location.line());
+        print!("{ANSI_FOREGROUND_CYAN}{}:{} | {ANSI_CLEAR}", location.file(), location.line());
     }
 
     if let Some(msg) = info.message() {

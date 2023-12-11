@@ -39,7 +39,7 @@ QEMUOPTS += -device isa-debug-exit,iobase=0x604,iosize=0x04
 QEMUOPTS += -nographic
 QEMUOPTS += -cpu qemu64,fsgsbase,msr -m 512M
 QEMUOPTS += -nic user,model=virtio-net-pci
-QEMUOPTS += -d int
+QEMUOPTS += -d int,guest_errors
 
 # Default target.
 .PHONY: all

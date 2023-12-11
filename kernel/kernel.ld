@@ -14,7 +14,6 @@ SECTIONS
         *(.trap)
         . = ALIGN(4096);
     }
-    PROVIDE(__text_end = .);
 
     .rodata  BLOCK(4096) : ALIGN(4096)
     {
@@ -37,7 +36,7 @@ SECTIONS
 
     . = ALIGN(4096);
 
-    PROVIDE(__bss_end = .);
+    PROVIDE(__kernel_end = .);
 
     /DISCARD/ : {
         *(.eh_frame)
