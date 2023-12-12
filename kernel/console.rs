@@ -170,7 +170,6 @@ pub mod uart {
 
 use crate::trap;
 use spin::Mutex;
-use x86_64::instructions::interrupts;
 
 pub struct ConsoleInputBuffer {
     buffer: [char; 256],
@@ -192,7 +191,7 @@ pub fn init() {
     uart::init();
     crate::print!("\x1bc"); // clears the screen
     crate::println!();
-    crate::log!("cpu0: booting lithium... [ \x1b[0;32mOK\x1b[0m ]");
+    crate::log!("console::init(): booting lithium... [ \x1b[0;32mOK\x1b[0m ]");
 }
 
 pub fn print(args: core::fmt::Arguments) {
@@ -209,7 +208,11 @@ pub fn interrupt() {
         while let Some(mut ch) = uart::read() {
             match ch {
                 CTRL_U => {
-                    while buf.edit_index != buf.write_index {
+                    while {
+                        let e = buf.edit_index;
+                        let w = buf.write_index;
+                        e != w && buf.buffer[(e - 1) % 256] != '\n'
+                    } {
                         buf.edit_index -= 1;
 
                         if buf.echo {
@@ -218,7 +221,7 @@ pub fn interrupt() {
                     }
                 }
                 _ => {
-                    if ch != b'\x00' {
+                    if ch != b'\x00' && (buf.edit_index - buf.read_index) < 256 {
                         ch = if ch == b'\r' { b'\n' } else { ch };
                         let e = buf.edit_index;
                         buf.buffer[e] = ch as char;
