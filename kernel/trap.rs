@@ -19,7 +19,7 @@ pub const IRQ_COM1: u8 = 4;
 
 const CMD_END_OF_INTERRUPT: u8 = 0x20;
 
-/// Handles traps (interrupts, nmi, exceptions, etc.) raised in kernel space.
+/// Handles traps raised in kernel space.
 fn kerneltrap(_stack_frame: InterruptStackFrame, index: u8, _error_code: Option<u64>) {
     // log!("trap::kerneltrap(): hello from trap handler!");
     match index {
@@ -124,9 +124,6 @@ fn enable_pic8259a() {
         slave_data_port.write(IRQ_SLAVE);
         // ICW4: some other configuration stuff
         slave_data_port.write(ICW4::MODE_8086.bits());
-
-        // Enable console interrupts.
-        console::enable_interrupts();
     }
 }
 
@@ -156,6 +153,9 @@ pub fn init() {
 
     // Enable legacy PIC device.
     enable_pic8259a();
+
+    // Enable console interrupts.
+    console::enable_interrupts();
 
     // Finally enable interrupts.
     interrupts::enable();

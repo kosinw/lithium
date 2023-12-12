@@ -33,6 +33,7 @@ dependencies = [
 name = "lithium"
 version = "0.1.0"
 dependencies = [
+ "bit_field",
  "bitflags",
  "linked_list_allocator",
  "raw-cpuid",
