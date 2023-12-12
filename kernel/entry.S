@@ -7,7 +7,7 @@ global  STACKSIZE
 extern  kernel_main
 
 PAGESIZE        equ 4096
-STACKSIZE       equ PAGESIZE*10
+STACKSIZE       equ PAGESIZE*15
 
 MAGIC           equ 0x1BADB002
 MBALIGN         equ 1 << 0
@@ -118,11 +118,6 @@ _start64:
 
 section .rodata
 align PAGESIZE
-bootpgtbl:
-    dq      (bootpgtbl3) + (PAGE_WRITABLE | PAGE_PRESENT)
-    resb    PAGESIZE - 8
-
-align PAGESIZE
 bootpgtbl3:
     dq      (0 << 20) + (PAGE_HUGE | PAGE_WRITABLE | PAGE_PRESENT)
     resb    PAGESIZE - 8
@@ -134,6 +129,11 @@ bootgdt:
 .ptr:
     dw      ($)-bootgdt-1
     dq      bootgdt
+
+align PAGESIZE
+bootpgtbl:
+    dq      (bootpgtbl3) + (PAGE_WRITABLE | PAGE_PRESENT)
+    resb    PAGESIZE - 8
 
 section .bss
 align PAGESIZE

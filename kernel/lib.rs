@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(panic_info_message)]
+#![feature(abi_x86_interrupt)]
 
 extern crate alloc;
 
@@ -11,7 +12,7 @@ mod multiboot;
 mod runtime;
 mod trap;
 
-/// Entrypoint for lithium kernel.
+/// Entrypoint for the Lithium kernel.
 ///
 /// The library operating system calls initialization routines in this function
 /// related to memory management and drivers before transferring control to the
@@ -23,4 +24,7 @@ pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) {
     memory::init(mbi_ptr);
     heap::init();
     trap::init();
+    // x86_64::instructions::interrupts::enable();
+    x86_64::instructions::interrupts::int3();
+    log!("it did not crash!");
 }

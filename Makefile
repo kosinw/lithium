@@ -32,14 +32,14 @@ OBJFILES := $(addprefix target/obj/, $(ASMFILES:.S=.S.o))
 HEADER_DEPS := $(addprefix target/obj/,$(ASMFILES:.S=.S.d))
 
 # Options for running the QEMU emulator.
-QEMUOPTS := -machine q35
+QEMUOPTS := -machine pc
 QEMUOPTS += -no-reboot
-QEMUOPTS += -serial mon:stdio
-QEMUOPTS += -device isa-debug-exit,iobase=0x604,iosize=0x04
-# QEMUOPTS += -nographic
-QEMUOPTS += -cpu qemu64,fsgsbase,msr -m 512M
+QEMUOPTS += -nographic
+# QEMUOPTS += -cpu qemu64,fsgsbase,msr
+QEMUOPTS += -cpu max
+QEMUOPTS += -m 512M
 QEMUOPTS += -nic user,model=virtio-net-pci
-QEMUOPTS += -d int
+QEMUOPTS += -d int -M smm=off
 
 # Default target.
 .PHONY: all

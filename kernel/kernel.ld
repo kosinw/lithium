@@ -32,15 +32,13 @@ SECTIONS
     {
         *(.bss .bss.*)
         *(COMMON)
-        . = ALIGN(4096);
+        . = ALIGN(0x100000);
     }
 
-    /DISCARD/ BLOCK(0x100000) : ALIGN(0x100000) {
+    /DISCARD/ : {
         *(.eh_frame)
         *(.note .note.*)
     }
-
-    . = ALIGN(0x100000);
 
     PROVIDE(__kernel_end = .);
 }

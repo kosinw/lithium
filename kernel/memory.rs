@@ -6,8 +6,10 @@ use core::ops::Deref;
 use core::ops::DerefMut;
 use spin::Mutex;
 use x86_64::registers::control::Cr3;
+use x86_64::structures::paging::mapper::CleanUp;
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::page::AddressNotAligned;
+use x86_64::structures::paging::page::PageRange;
 use x86_64::structures::paging::FrameAllocator;
 use x86_64::structures::paging::FrameDeallocator;
 use x86_64::structures::paging::Mapper;
@@ -29,7 +31,7 @@ pub const HIGH_HALF_BASE: u64 = 0xFFFF800000000000u64;
 // pub const DEVICE_BASE: u64 = 0xFFFFFFFF40000000u64;
 
 // Offset where heap starts.
-pub const HEAP_START: u64 = 0x444444440000u64;
+pub const HEAP_START: u64 = 0x000044444444000u64;
 pub const HEAP_SIZE: u64 = 1024 * 1024; // 1 MiB.
 
 /// Physical frame allocator. Responsible for allocating physical frames for virtual memory manager.
@@ -175,7 +177,7 @@ impl PhysicalAllocator {
             }
         }
 
-        panic!("Could not deallocate given frame.")
+        // Otherwise just drop frame lmao
     }
 }
 
@@ -393,7 +395,7 @@ impl PhysicalMemoryLayout {
 /// The size parameter determines the length of the memory region to be mapped.
 ///
 /// This function does not flush the TLB.
-unsafe fn map_virtual_region_with_pgtbl<S: PageSize>(
+pub unsafe fn map_region<S: PageSize>(
     pgtbl: &mut impl Mapper<S>,
     va: VirtAddr,
     pa: PhysAddr,
@@ -402,9 +404,9 @@ unsafe fn map_virtual_region_with_pgtbl<S: PageSize>(
 ) -> Result<(), MapToError<S>> {
     let mut alloc = FRAME_ALLOCATOR.lock();
 
-    let page_range = {
-        let start_page: Page<S> = Page::containing_address(va);
-        let end_page: Page<S> = Page::containing_address(va + size);
+    let page_range: PageRange<S> = {
+        let start_page = Page::containing_address(va);
+        let end_page = Page::containing_address(va + size);
         Page::range(start_page, end_page)
     };
 
@@ -424,6 +426,35 @@ unsafe fn map_virtual_region_with_pgtbl<S: PageSize>(
     Ok(())
 }
 
+/// Unmaps a region of memory in a page table.
+pub unsafe fn unmap_region(
+    pgtbl: &mut (impl CleanUp + Mapper<Size4KiB>),
+    va: VirtAddr,
+    size: u64,
+    should_free: bool,
+) {
+    assert!(va.is_aligned(Size4KiB::SIZE));
+
+    let mut alloc = FRAME_ALLOCATOR.lock();
+
+    let page_range = {
+        let start_page = Page::containing_address(va);
+        let end_page = Page::containing_address(va + size - 1u64);
+        Page::range_inclusive(start_page, end_page)
+    };
+
+    for page in page_range {
+        log!("memory::unmap_region(): unmapping {:016p}", page.start_address().as_ptr::<u8>());
+        let _ = pgtbl
+            .unmap(page)
+            .expect("memory::unmap_region(): trying to unmmap invalid memory region");
+    }
+
+    if should_free {
+        pgtbl.clean_up_addr_range(page_range, &mut *alloc);
+    }
+}
+
 /// Maps a region of memory into the kernel page table.
 ///
 /// This function takes a virtual address, physical address, and size as parameters
@@ -431,7 +462,7 @@ unsafe fn map_virtual_region_with_pgtbl<S: PageSize>(
 /// The size parameter determines the length of the memory region to be mapped.
 ///
 /// This function does not flush the TLB.
-pub unsafe fn map_virtual_region<S: PageSize>(
+pub unsafe fn kernel_map_region<S: PageSize>(
     va: VirtAddr,
     pa: PhysAddr,
     size: u64,
@@ -442,7 +473,14 @@ where
 {
     let mut kpgtbl = KERNEL_PAGETABLE.lock();
     let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_BASE));
-    map_virtual_region_with_pgtbl(&mut mapper, va, pa, size, flags)
+    map_region(&mut mapper, va, pa, size, flags)
+}
+
+/// Unmaps a region of memory in kernel page table.
+pub unsafe fn kernel_unmap_region(va: VirtAddr, size: u64, should_free: bool) {
+    let mut kpgtbl = KERNEL_PAGETABLE.lock();
+    let mut mapper = OffsetPageTable::new(&mut kpgtbl, VirtAddr::new(HIGH_HALF_BASE));
+    unmap_region(&mut mapper, va, size, should_free)
 }
 
 /// Allocates a contiguous physical region with the specified size.
@@ -535,10 +573,10 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
     log!("memory::init(): physical bitmap allocator initialized [ \x1b[0;32mOK\x1b[0m ]");
     log!("memory::init(): {sz} total bytes available");
 
-    let (frame, _) = Cr3::read();
+    let (bootpgtbl, _) = Cr3::read();
     log!(
         "memory::init(): currently using bootloader page table at {:#016x}",
-        frame.start_address().as_u64()
+        bootpgtbl.start_address().as_u64()
     );
 
     unsafe {
@@ -551,7 +589,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         let mut mapper = OffsetPageTable::new(kpgtbl.deref_mut(), VirtAddr::zero());
 
         // map 4 GiB physical memory into higher half address
-        map_virtual_region_with_pgtbl::<Size1GiB>(
+        map_region::<Size1GiB>(
             &mut mapper,
             VirtAddr::new(HIGH_HALF_BASE),
             PhysAddr::zero(),
@@ -571,7 +609,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         // .expect("failed to identity map region before kernel");
 
         // identity map text section of kernel with execute and no write
-        map_virtual_region_with_pgtbl::<Size4KiB>(
+        map_region::<Size4KiB>(
             &mut mapper,
             VirtAddr::new(layout.kernel_start.as_u64()),
             layout.kernel_start,
@@ -581,7 +619,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         .expect("failed to identity map .text section of kernel");
 
         // identity map rest of kernel with read and write
-        map_virtual_region_with_pgtbl::<Size4KiB>(
+        map_region::<Size4KiB>(
             &mut mapper,
             VirtAddr::new(layout.data_start.as_u64()),
             layout.data_start,
@@ -591,7 +629,7 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         .expect("failed to identity map kernel and physical memory");
 
         // identity map rest of kernel with read and write
-        map_virtual_region_with_pgtbl::<Size2MiB>(
+        map_region::<Size2MiB>(
             &mut mapper,
             VirtAddr::new(layout.kernel_end.align_up(Size2MiB::SIZE).as_u64()),
             layout.kernel_end.align_up(Size2MiB::SIZE),
@@ -601,10 +639,19 @@ pub fn init(mbi_ptr: *const MultibootInformation) {
         .expect("failed to identity map unallocated memory");
 
         let new_page_table = kpgtbl.deref() as *const PageTable as u64;
-        let page_table_frame = PhysFrame::containing_address(PhysAddr::new(new_page_table));
+        let page_table_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(PhysAddr::new(new_page_table));
 
         let (_, flags) = Cr3::read();
         Cr3::write(page_table_frame, flags);
+    }
+
+    // Unmap old page table to use as guard page for stack.
+    unsafe {
+        kernel_unmap_region(
+            VirtAddr::new(bootpgtbl.start_address().as_u64()),
+            Size4KiB::SIZE,
+            false,
+        );
     }
 
     let (frame, _) = Cr3::read();

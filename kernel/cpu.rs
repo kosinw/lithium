@@ -1,5 +1,5 @@
 use core::arch::asm;
-use core::sync::atomic::{fence, Ordering};
+use core::sync::atomic;
 
 use x86_64::instructions::interrupts;
 use x86_64::instructions::tables::load_tss;
@@ -7,6 +7,7 @@ use x86_64::registers::model_specific::GsBase;
 use x86_64::registers::segmentation::{Segment, Segment64, CS, DS, ES, GS, SS};
 use x86_64::structures::gdt::Descriptor;
 use x86_64::structures::gdt::GlobalDescriptorTable;
+use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
 
@@ -57,11 +58,13 @@ impl CpuFrequency {
 /// Per-CPU data structure that holds important information such
 #[derive(Debug, Clone)]
 #[allow(unused)]
+#[repr(C, align(16))]
 pub struct Cpu {
-    id: usize,                  // logical identifier of core
-    freq: CpuFrequency,         // frequency which timestamp counter runs at
-    tss: TaskStateSegment,      // task state segment
-    gdt: GlobalDescriptorTable, // global descriptor table
+    id: usize,                         // logical identifier of core
+    freq: CpuFrequency,                // frequency which timestamp counter runs at
+    pub tss: TaskStateSegment,         // task state segment
+    pub gdt: GlobalDescriptorTable,    // global descriptor table
+    pub idt: InterruptDescriptorTable, // interrupt descriptor table
 }
 
 impl Cpu {
@@ -72,6 +75,7 @@ impl Cpu {
             freq: CpuFrequency::Invalid,
             tss: TaskStateSegment::new(),
             gdt: GlobalDescriptorTable::new(),
+            idt: InterruptDescriptorTable::new(),
         }
     }
 
@@ -88,9 +92,9 @@ impl Cpu {
         unsafe {
             let lo: u32;
             let hi: u32;
-            fence(Ordering::SeqCst);
+            atomic::fence(atomic::Ordering::SeqCst);
             asm!("rdtsc", out("eax") lo, out ("edx") hi);
-            fence(Ordering::SeqCst);
+            atomic::fence(atomic::Ordering::SeqCst);
             u64::from(hi) << 32 | u64::from(lo)
         }
     }
@@ -117,12 +121,13 @@ pub fn init(id: usize) {
 
     let mut tss = TaskStateSegment::new();
     let mut gdt = GlobalDescriptorTable::new();
+    let idt = InterruptDescriptorTable::new();
 
     // Setup task state segment for a stack since we only use a
     // single trap vector to handle all interrupts.
     // TODO(kosinw): Come up with another way for multiprocessor support in the future
     // Each proecssor should have their own trap stack.
-    tss.interrupt_stack_table[0] = {
+    tss.interrupt_stack_table[1] = {
         let stack_start = VirtAddr::from_ptr(TRAP_STACK.as_ptr());
         stack_start + TRAP_STACK_SIZE
     };
@@ -134,12 +139,12 @@ pub fn init(id: usize) {
 
         // Load the newly created segment descriptors into appropriate registers
 
-        gdt.load_unsafe();
-        CS::set_reg(cs);
-        DS::set_reg(ds);
-        ES::set_reg(ds);
-        SS::set_reg(ds);
-        load_tss(ts);
+        // gdt.load_unsafe();
+        // CS::set_reg(cs);
+        // DS::set_reg(ds);
+        // ES::set_reg(ds);
+        // SS::set_reg(ds);
+        // load_tss(ts);
     }
 
     // Detect the frequency of the processor.
@@ -164,6 +169,7 @@ pub fn init(id: usize) {
             freq,
             gdt,
             tss,
+            idt,
         };
 
         // Write the pointer of this structure into GSBASE.
@@ -198,9 +204,9 @@ pub unsafe fn id() -> usize {
 /// GSBASE register during the cpu::init routine. If this routine is called
 /// before cpu::init, then potential invalid data will be read and this function is
 /// unsafe.
-// pub unsafe fn current_mut() -> &'static mut Cpu {
-//     GS::read_base().as_mut_ptr::<Cpu>().as_mut().unwrap()
-// }
+pub unsafe fn current_mut() -> &'static mut Cpu {
+    GS::read_base().as_mut_ptr::<Cpu>().as_mut().unwrap()
+}
 
 /// Gets the ticks of the current processor.
 ///

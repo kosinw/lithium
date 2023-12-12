@@ -39,7 +39,7 @@ pub fn init() {
 
     unsafe {
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
-        memory::map_virtual_region::<Size4KiB>(va, pa, size as u64, flags)
+        memory::kernel_map_region::<Size4KiB>(va, pa, size as u64, flags)
             .expect("failed to map heap pages");
     }
 
