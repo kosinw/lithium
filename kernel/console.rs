@@ -187,7 +187,7 @@ pub fn init() {
     uart::init();
     crate::print!("\x1bc"); // clears the screen
     crate::println!();
-    crate::log!("lithium kernel is booting... [ \x1b[0;32mOK\x1b[0m ]");
+    crate::log!("cpu0: booting lithium... [ \x1b[0;32mOK\x1b[0m ]");
 }
 
 pub fn print(args: core::fmt::Arguments) {
@@ -217,12 +217,11 @@ macro_rules! log {
             const ANSI_CLEAR: &str = "\x1b[0m";
             const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";
             let ticks = cpu::ticks();
-            let id = cpu::id();
             $crate::print!("{ANSI_FOREGROUND_YELLOW}[{ticks: >13.6}]{ANSI_CLEAR} ");
             $crate::print!("{ANSI_FOREGROUND_CYAN}");
             $crate::print!("{0: <20} | line {1: <5} | ", file!(), line!());
             $crate::print!("{ANSI_CLEAR}");
-            $crate::println!("[cpu{id}] {}", format_args!($($arg)*));
+            $crate::println!(" {}", format_args!($($arg)*));
         }
     })
 }

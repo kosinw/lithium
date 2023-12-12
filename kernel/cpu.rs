@@ -119,59 +119,57 @@ impl Cpu {
 pub fn init(id: usize) {
     assert!(id < CPU_COUNT);
 
-    let mut tss = TaskStateSegment::new();
-    let mut gdt = GlobalDescriptorTable::new();
-    let idt = InterruptDescriptorTable::new();
-
-    // Setup task state segment for a stack since we only use a
-    // single trap vector to handle all interrupts.
-    // TODO(kosinw): Come up with another way for multiprocessor support in the future
-    // Each proecssor should have their own trap stack.
-    tss.interrupt_stack_table[1] = {
-        let stack_start = VirtAddr::from_ptr(TRAP_STACK.as_ptr());
-        stack_start + TRAP_STACK_SIZE
-    };
-
-    unsafe {
-        let cs = gdt.add_entry(Descriptor::kernel_code_segment());
-        let ds = gdt.add_entry(Descriptor::kernel_data_segment());
-        let ts = gdt.add_entry(Descriptor::tss_segment_unchecked(&tss));
-
-        // Load the newly created segment descriptors into appropriate registers
-
-        // gdt.load_unsafe();
-        // CS::set_reg(cs);
-        // DS::set_reg(ds);
-        // ES::set_reg(ds);
-        // SS::set_reg(ds);
-        // load_tss(ts);
-    }
-
-    // Detect the frequency of the processor.
-    // TODO(kosinw): Add alternate methods of detecting the frequency and provenance,
-    // for now just assume that the cpu has the tschz MSR.
-    let cpuid: CpuId<CpuIdReaderNative> = CpuId::new();
-
-    let freq = cpuid
-        .get_tsc_info()
-        .and_then(|x| x.tsc_frequency())
-        .map_or(CpuFrequency::Invalid, |v| CpuFrequency::CpuIdTscInfo {
-            hz: v,
-        });
-
-    // Ensure processor interrupts are turned off.
-    interrupts::disable();
-
-    // Save the CPU information into the a global data structure.
     unsafe {
         CPUS[id] = Cpu {
             id,
-            freq,
-            gdt,
-            tss,
-            idt,
+            freq: CpuFrequency::Invalid,
+            gdt: GlobalDescriptorTable::new(),
+            tss: TaskStateSegment::new(),
+            idt: InterruptDescriptorTable::new(),
         };
 
+        let cpu = &mut CPUS[id];
+
+        // Setup task state segment for a stack since we only use a
+        // single trap vector to handle all interrupts.
+        // TODO(kosinw): Come up with another way for multiprocessor support in the future
+        // Each proecssor should have their own trap stack.
+        cpu.tss.interrupt_stack_table[1] = {
+            let stack_start = VirtAddr::from_ptr(TRAP_STACK.as_ptr());
+            stack_start + TRAP_STACK_SIZE
+        };
+
+        let cs = cpu.gdt.add_entry(Descriptor::kernel_code_segment());
+        let ds = cpu.gdt.add_entry(Descriptor::kernel_data_segment());
+        let ts = cpu
+            .gdt
+            .add_entry(Descriptor::tss_segment_unchecked(&cpu.tss));
+
+        // Load the newly created segment descriptors into appropriate registers
+
+        cpu.gdt.load_unsafe();
+        CS::set_reg(cs);
+        DS::set_reg(ds);
+        ES::set_reg(ds);
+        SS::set_reg(ds);
+        load_tss(ts);
+
+        // Detect the frequency of the processor.
+        // TODO(kosinw): Add alternate methods of detecting the frequency and provenance,
+        // for now just assume that the cpu has the tschz MSR.
+        let cpuid: CpuId<CpuIdReaderNative> = CpuId::new();
+
+        cpu.freq = cpuid
+            .get_tsc_info()
+            .and_then(|x| x.tsc_frequency())
+            .map_or(CpuFrequency::Invalid, |v| CpuFrequency::CpuIdTscInfo {
+                hz: v,
+            });
+
+        // Ensure processor interrupts are turned off.
+        interrupts::disable();
+
+        // Save the CPU information into the a global data structure.
         // Write the pointer of this structure into GSBASE.
         let ptr = &CPUS[id] as *const Cpu;
         GsBase::write(VirtAddr::from_ptr(ptr));
@@ -187,14 +185,6 @@ pub fn init(id: usize) {
 /// unsafe.
 pub unsafe fn current() -> &'static Cpu {
     GS::read_base().as_ptr::<Cpu>().as_ref().unwrap()
-}
-
-/// Gets the logical number of the current processor.
-///
-/// # Safety
-/// This function is unsafe for the same reasons that [`crate::cpu::current`] is also unsafe.
-pub unsafe fn id() -> usize {
-    current().id
 }
 
 /// Gets a mutable reference to the per-cpu data structure for the current processor.

@@ -24,7 +24,4 @@ pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) {
     memory::init(mbi_ptr);
     heap::init();
     trap::init();
-    // x86_64::instructions::interrupts::enable();
-    x86_64::instructions::interrupts::int3();
-    log!("it did not crash!");
 }
