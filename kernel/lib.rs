@@ -10,7 +10,7 @@ mod heap;
 mod memory;
 mod multiboot;
 mod net;
-mod runtime;
+mod panic;
 mod trap;
 
 /// Entrypoint for the Lithium kernel.
@@ -25,6 +25,7 @@ pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) -
     memory::init(mbi_ptr);
     heap::init();
     trap::init();
+    console::enable_echo(true);
 
     loop {
         x86_64::instructions::hlt();

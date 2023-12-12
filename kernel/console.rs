@@ -1,18 +1,13 @@
 #![allow(dead_code)]
 
 pub mod uart {
+    use crate::spin_until;
     use bitflags::bitflags;
     use core::fmt::Write;
     use spin::Mutex;
-    use x86_64::instructions::port::Port;
+    use x86_64::instructions::{interrupts, port::Port};
 
-    macro_rules! busy_wait {
-        ($cond:expr) => {
-            while !$cond {
-                core::hint::spin_loop();
-            }
-        };
-    }
+    pub const COM1: u16 = 0x3F8;
 
     bitflags! {
         pub struct InterruptEnableFlags: u8 {
@@ -25,24 +20,20 @@ pub mod uart {
 
     bitflags! {
         pub struct LineStatusFlags: u8 {
-            const INPUT_FULL = 1 << 1;
+            const INPUT_FULL = 1 << 0;
             const OUTPUT_EMPTY = 1 << 5;
         }
     }
 
-    #[derive(Debug, Copy, Clone)]
-    pub struct SerialPort(u16);
-
-    pub const COM1: u16 = 0x3F8;
-
-    const fn ctrl(b: u8) -> u8 {
-        b - b'@'
+    #[inline]
+    pub const fn ctrl(c: u8) -> u8 {
+        c - b'@'
     }
 
-    const BACKSPACE: u8 = ctrl(b'H');
-    const DELETE: u8 = 0x7F;
+    pub const BACKSPACE: u8 = ctrl(b'H');
+    pub const DELETE: u8 = 0x7F;
 
-    static mut UART: Mutex<SerialPort> = Mutex::new(SerialPort(COM1));
+    static mut UART: Mutex<Uart> = Mutex::new(Uart(COM1));
 
     pub fn init() {
         unsafe {
@@ -51,12 +42,12 @@ pub mod uart {
     }
 
     pub fn print(args: core::fmt::Arguments) {
-        unsafe {
+        interrupts::without_interrupts(|| unsafe {
             UART.lock().write_fmt(args).unwrap();
-        }
+        });
     }
 
-    pub fn read() -> u8 {
+    pub fn read() -> Option<u8> {
         unsafe { UART.lock().receive() }
     }
 
@@ -70,7 +61,10 @@ pub mod uart {
         unsafe { Port::new(port).read() }
     }
 
-    impl SerialPort {
+    #[derive(Debug)]
+    struct Uart(u16);
+
+    impl Uart {
         fn port_base(&self) -> u16 {
             self.0
         }
@@ -133,35 +127,38 @@ pub mod uart {
             LineStatusFlags::from_bits_truncate(inb(self.port_line_status()))
         }
 
-        pub fn send(&mut self, data: u8) {
+        fn send(&mut self, data: u8) {
             match data {
                 BACKSPACE | DELETE => {
-                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    spin_until!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                     outb(self.port_data(), b'\x08');
-                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    spin_until!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                     outb(self.port_data(), b' ');
-                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    spin_until!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                     outb(self.port_data(), b'\x08');
                 }
                 _ => {
-                    busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+                    spin_until!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
                     outb(self.port_data(), data);
                 }
             }
         }
 
-        pub fn send_raw(&mut self, data: u8) {
-            busy_wait!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
+        fn send_raw(&mut self, data: u8) {
+            spin_until!(self.line_status().contains(LineStatusFlags::OUTPUT_EMPTY));
             outb(self.port_data(), data);
         }
 
-        pub fn receive(&mut self) -> u8 {
-            busy_wait!(self.line_status().contains(LineStatusFlags::INPUT_FULL));
-            inb(self.port_data())
+        fn receive(&mut self) -> Option<u8> {
+            if self.line_status().contains(LineStatusFlags::INPUT_FULL) {
+                Some(inb(self.port_data()))
+            } else {
+                None
+            }
         }
     }
 
-    impl core::fmt::Write for SerialPort {
+    impl core::fmt::Write for Uart {
         fn write_str(&mut self, s: &str) -> core::fmt::Result {
             for byte in s.bytes() {
                 self.send(byte);
@@ -175,18 +172,20 @@ use crate::trap;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 
-pub struct Console {
-    buffer: [u8; 256],
+pub struct ConsoleInputBuffer {
+    buffer: [char; 256],
     read_index: usize,
     write_index: usize,
     edit_index: usize,
+    echo: bool,
 }
 
-static mut CONSOLE: Mutex<Console> = Mutex::new(Console {
-    buffer: [0u8; 256],
+static mut INPUT_BUFFER: Mutex<ConsoleInputBuffer> = Mutex::new(ConsoleInputBuffer {
+    buffer: ['\x00'; 256],
     read_index: 0,
     write_index: 0,
     edit_index: 0,
+    echo: false,
 });
 
 pub fn init() {
@@ -201,15 +200,56 @@ pub fn print(args: core::fmt::Arguments) {
 }
 
 pub fn interrupt() {
-    let ch = uart::read() as char;
+    unsafe {
+        // let ch = uart::read() as char;
+        let mut buf = INPUT_BUFFER.lock();
 
-    crate::log!("console::interrupt(): console interrupt");
-    // crate::print!("{}", ch);s
+        const CTRL_U: u8 = uart::ctrl(b'U');
+
+        while let Some(mut ch) = uart::read() {
+            match ch {
+                CTRL_U => {
+                    while buf.edit_index != buf.write_index {
+                        buf.edit_index -= 1;
+
+                        if buf.echo {
+                            crate::print!("{}", uart::BACKSPACE as char);
+                        }
+                    }
+                }
+                _ => {
+                    if ch != b'\x00' {
+                        ch = if ch == b'\r' { b'\n' } else { ch };
+                        let e = buf.edit_index;
+                        buf.buffer[e] = ch as char;
+                        buf.edit_index = buf.edit_index.wrapping_add(1) % 256;
+
+                        if buf.echo {
+                            crate::print!("{}", ch as char);
+                        }
+
+                        if ch == b'\n'
+                            || ch == uart::ctrl(b'D')
+                            || buf.edit_index == buf.read_index + 256
+                        {
+                            buf.write_index = buf.edit_index;
+                        }
+                    }
+                }
+            };
+        }
+    }
 }
 
 pub fn enable_interrupts() {
     // let _ = uart::read();
     trap::enable_irq(trap::IRQ_COM1);
+}
+
+pub fn enable_echo(v: bool) {
+    unsafe {
+        INPUT_BUFFER.lock().echo = v;
+    }
 }
 
 #[macro_export]
@@ -242,4 +282,13 @@ macro_rules! log {
             $crate::println!(" {}", format_args!($($arg)*));
         }
     })
+}
+
+#[macro_export]
+macro_rules! spin_until {
+    ($cond:expr) => {
+        while !$cond {
+            core::hint::spin_loop();
+        }
+    };
 }

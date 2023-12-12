@@ -11,11 +11,18 @@ fn panic(info: &PanicInfo) -> ! {
     const ANSI_FOREGROUND_CYAN: &str = "\x1b[36m";
     const ANSI_CLEAR: &str = "\x1b[0m";
 
+    instructions::interrupts::disable();
+
     // print!("\x1bc");
     print!("{ANSI_FOREGROUND_RED}[        panic]{ANSI_CLEAR} ");
 
     if let Some(location) = info.location() {
-        print!("{ANSI_FOREGROUND_CYAN}{}:{} | {ANSI_CLEAR}", location.file(), location.line());
+        print!("{ANSI_FOREGROUND_CYAN}");
+        print!(
+            "{0: <20} | line {1: <5} | {ANSI_CLEAR} ",
+            location.file(),
+            location.line()
+        );
     }
 
     if let Some(msg) = info.message() {
@@ -25,7 +32,7 @@ fn panic(info: &PanicInfo) -> ! {
     }
 
     unsafe {
-        PortWriteOnly::new(0x604).write(4u16); // tell QEMU to turn off
+        PortWriteOnly::new(0x604).write(0x2000u16);
         loop {
             instructions::hlt();
         }
