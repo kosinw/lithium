@@ -65,6 +65,7 @@ pub struct Cpu {
     pub tss: TaskStateSegment,         // task state segment
     pub gdt: GlobalDescriptorTable,    // global descriptor table
     pub idt: InterruptDescriptorTable, // interrupt descriptor table
+    pub irq_mask: u16,                 // current interrupt mask
 }
 
 impl Cpu {
@@ -76,6 +77,7 @@ impl Cpu {
             tss: TaskStateSegment::new(),
             gdt: GlobalDescriptorTable::new(),
             idt: InterruptDescriptorTable::new(),
+            irq_mask: 0xffffu16,
         }
     }
 
@@ -126,6 +128,7 @@ pub fn init(id: usize) {
             gdt: GlobalDescriptorTable::new(),
             tss: TaskStateSegment::new(),
             idt: InterruptDescriptorTable::new(),
+            irq_mask: 0xffffu16,
         };
 
         let cpu = &mut CPUS[id];

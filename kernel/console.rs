@@ -56,6 +56,10 @@ pub mod uart {
         }
     }
 
+    pub fn read() -> u8 {
+        unsafe { UART.lock().receive() }
+    }
+
     fn outb(port: u16, v: u8) {
         unsafe {
             Port::new(port).write(v);
@@ -167,7 +171,9 @@ pub mod uart {
     }
 }
 
+use crate::trap;
 use spin::Mutex;
+use x86_64::instructions::interrupts;
 
 pub struct Console {
     buffer: [u8; 256],
@@ -192,6 +198,18 @@ pub fn init() {
 
 pub fn print(args: core::fmt::Arguments) {
     uart::print(args);
+}
+
+pub fn interrupt() {
+    let ch = uart::read() as char;
+
+    crate::log!("console::interrupt(): console interrupt");
+    // crate::print!("{}", ch);s
+}
+
+pub fn enable_interrupts() {
+    // let _ = uart::read();
+    trap::enable_irq(trap::IRQ_COM1);
 }
 
 #[macro_export]

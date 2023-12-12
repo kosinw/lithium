@@ -9,6 +9,7 @@ mod cpu;
 mod heap;
 mod memory;
 mod multiboot;
+mod net;
 mod runtime;
 mod trap;
 
@@ -18,10 +19,14 @@ mod trap;
 /// related to memory management and drivers before transferring control to the
 /// linked unikernel application.
 #[no_mangle]
-pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) {
+pub extern "C" fn kernel_main(mbi_ptr: *const multiboot::MultibootInformation) -> ! {
     cpu::init(0);
     console::init();
     memory::init(mbi_ptr);
     heap::init();
     trap::init();
+
+    loop {
+        x86_64::instructions::hlt();
+    }
 }

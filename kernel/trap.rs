@@ -1,28 +1,39 @@
 use x86_64::instructions::interrupts;
 use x86_64::instructions::port::PortWriteOnly;
 use x86_64::set_general_handler;
+use x86_64::structures::idt::ExceptionVector;
 use x86_64::structures::idt::InterruptStackFrame;
-use x86_64::structures::port::PortWrite;
 
+use crate::console;
 use crate::cpu;
 use crate::log;
-
-/// Handles traps (interrupts, nmi, exceptions, etc.) raised in kernel space.
-fn kerneltrap(_stack_frame: InterruptStackFrame, index: u8, error_code: Option<u64>) {
-    match index {
-        13 => panic!("trap::kerneltrap(): general protection fault"),
-        14 => panic!("trap::kerneltrap(): page fault"),
-        _ => panic!("trap::kerneltrap(): unknown trap kind {}", index),
-    }
-}
 
 const IO_PIC1_COMMAND: u16 = 0x20;
 const IO_PIC1_DATA: u16 = 0x21;
 const IO_PIC2_COMMAND: u16 = 0xA0;
 const IO_PIC2_DATA: u16 = 0xA1;
 
-const TRAP_IRQ0: u8 = 0x20;
-const IRQ_SLAVE: u8 = 2;
+pub const TRAP_IRQ0: u8 = 0x20;
+pub const IRQ_SLAVE: u8 = 2;
+pub const IRQ_COM1: u8 = 4;
+
+const CMD_END_OF_INTERRUPT: u8 = 0x20;
+
+/// Handles traps (interrupts, nmi, exceptions, etc.) raised in kernel space.
+fn kerneltrap(_stack_frame: InterruptStackFrame, index: u8, _error_code: Option<u64>) {
+    // log!("trap::kerneltrap(): hello from trap handler!");
+    match index {
+        x if x == ExceptionVector::GeneralProtection as u8 => {
+            panic!("trap::kerneltrap(): general protection fault")
+        }
+        x if x == ExceptionVector::Page as u8 => panic!("trap::kerneltrap(): page fault"),
+        x if x == (IRQ_COM1 + TRAP_IRQ0) => {
+            console::interrupt();
+            end_of_interrupt(x);
+        }
+        _ => panic!("trap::kerneltrap(): unknown trap kind {}", index),
+    }
+}
 
 bitflags::bitflags! {
     // ICW1 flags
@@ -44,6 +55,40 @@ bitflags::bitflags! {
     }
 }
 
+/// Acknowledge end of interrupt for PIC device.
+fn end_of_interrupt(v: u8) {
+    if (TRAP_IRQ0..TRAP_IRQ0 + 8).contains(&v) {
+        let mut command_port = PortWriteOnly::new(IO_PIC1_COMMAND);
+        unsafe {
+            command_port.write(CMD_END_OF_INTERRUPT);
+        }
+    } else if (TRAP_IRQ0 + 8..TRAP_IRQ0 + 16).contains(&v) {
+        let mut command_port = PortWriteOnly::new(IO_PIC2_COMMAND);
+        unsafe {
+            command_port.write(CMD_END_OF_INTERRUPT);
+        }
+    }
+}
+
+/// Sets the IRQ enable mask.
+fn set_irq_mask(mask: u16) {
+    unsafe {
+        let mut master_data_port = PortWriteOnly::new(IO_PIC1_DATA);
+        let mut slave_data_port = PortWriteOnly::new(IO_PIC2_DATA);
+
+        let cpu = cpu::current_mut();
+        cpu.irq_mask = mask;
+        master_data_port.write((mask & 0xff) as u8);
+        slave_data_port.write((mask >> 8) as u8);
+    }
+}
+
+/// Enables the IRQ.
+pub fn enable_irq(irq: u8) {
+    let cpu = unsafe { cpu::current() };
+    set_irq_mask(cpu.irq_mask & !(1 << irq));
+}
+
 /// Initializes the PIC8259A interrupt controller.
 fn enable_pic8259a() {
     unsafe {
@@ -52,7 +97,11 @@ fn enable_pic8259a() {
         let mut slave_data_port = PortWriteOnly::new(IO_PIC2_DATA);
         let mut slave_command_port = PortWriteOnly::new(IO_PIC2_COMMAND);
 
-        // Mask all interrupts
+        // Setup all interrupts but IRQ slave line to be masked.
+        let cpu = cpu::current_mut();
+        cpu.irq_mask = !(1 << IRQ_SLAVE);
+
+        // Mask all interrupts.
         master_data_port.write(0xFFu8);
         slave_data_port.write(0xFFu8);
 
@@ -64,7 +113,7 @@ fn enable_pic8259a() {
         // ICW3: bit mask of IRQ lines connected to slave
         master_data_port.write(1 << IRQ_SLAVE);
         // ICW4: some other configuration stuff
-        master_data_port.write((ICW4::MODE_8086 | ICW4::AUTO_EOI).bits());
+        master_data_port.write(ICW4::MODE_8086.bits());
 
         // Initialize slave PIC.
         // ICW1: edge triggering, cascaded modes
@@ -74,7 +123,10 @@ fn enable_pic8259a() {
         // ICW3: which master line are we connected to?
         slave_data_port.write(IRQ_SLAVE);
         // ICW4: some other configuration stuff
-        slave_data_port.write((ICW4::MODE_8086 | ICW4::AUTO_EOI).bits());
+        slave_data_port.write(ICW4::MODE_8086.bits());
+
+        // Enable console interrupts.
+        console::enable_interrupts();
     }
 }
 
@@ -90,22 +142,23 @@ pub fn init() {
     let cpu = unsafe { cpu::current_mut() };
     set_general_handler!(&mut cpu.idt, kerneltrap);
 
-    crate::log!(
+    log!(
         "trap::init(): previous IDT is located at {:016p}",
         sidt().base.as_ptr::<u8>()
     );
 
-    // Enable legacy PIC device.
-    // TODO(kosinw): When going to MP support switch to APIC.
-    enable_pic8259a();
-
     cpu.idt.load();
 
-    crate::log!(
+    log!(
         "trap::init(): current IDT is located at {:016p}",
         sidt().base.as_ptr::<u8>()
     );
 
+    // Enable legacy PIC device.
+    enable_pic8259a();
+
     // Finally enable interrupts.
     interrupts::enable();
+
+    log!("trap::init(): interrupts are now enabled [ \x1b[0;32mOK\x1b[0m ]");
 }
