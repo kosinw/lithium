@@ -168,6 +168,51 @@ impl DeviceConfig {
         data.set_bit(2, true);
         register.write(data);
     }
+
+    /// Returns the approriate base adddress region.
+    pub fn base_address_region(&mut self, bar_index: u8) -> Option<BaseAddressRegister> {
+        use bit_field::BitField;
+
+        let offset = BAR0_OFFSET + 4 * bar_index;
+        let old = self.config_read_word(offset);
+
+        // Get the size of the BAR by doing this weird protocol:
+        // https://wiki.osdev.org/PCI#Address_and_size_of_the_BAR
+        self.config_write_word(offset, 0xffffffffu32);
+        let size_mask = self.config_read_word(offset);
+
+        let size = (!(size_mask & 0xfffffff0u32)).wrapping_add(1);
+
+        // Put the original value back.
+        self.config_write_word(offset, old);
+
+        if old.get_bit(0) {
+            // I/O space
+            let address = old & 0xfffffffcu32;
+            Some(BaseAddressRegister::IO { address, size })
+        } else {
+            // Memory space
+            let mut address = u64::from(old & 0xfffffff0);
+            let prefetchable = old.get_bit(3);
+            let memory_bar_type = old.get_bits(1..2) as u8;
+
+            if memory_bar_type == 0x2 {
+                if bar_index >= 5 {
+                    return None; // not possible??
+                }
+
+                let address_top = self.config_read_word(BAR0_OFFSET + 4 * (bar_index + 1));
+                address |= u64::from(address_top) << 32;
+            }
+
+            Some(BaseAddressRegister::Memory {
+                memory_bar_type,
+                prefetchable,
+                address,
+                size,
+            })
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -214,6 +259,32 @@ impl Iterator for CapabilityIter {
             id,
             private_header,
         })
+    }
+}
+
+// Read https://wiki.osdev.org/PCI#Base_Address_Registers for more info.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BaseAddressRegister {
+    Memory {
+        memory_bar_type: u8,
+        prefetchable: bool,
+        address: u64,
+        size: u32,
+    },
+
+    IO {
+        address: u32,
+        size: u32,
+    },
+}
+
+impl BaseAddressRegister {
+    pub fn region(&self) -> Option<(u64, u32)> {
+        if let Self::Memory { address, size, .. } = self {
+            Some((*address, *size))
+        } else {
+            None
+        }
     }
 }
 
