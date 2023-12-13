@@ -37,6 +37,7 @@ QEMUOPTS += -no-reboot
 QEMUOPTS += -nographic
 QEMUOPTS += -cpu max
 QEMUOPTS += -m 512M
+QEMUOPTS += -nic model=virtio-net-pci
 # QEMUOPTS += -d int -M smm=off
 
 # Default target.

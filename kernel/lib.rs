@@ -9,6 +9,7 @@ mod cpu;
 mod heap;
 mod memory;
 mod multiboot;
+mod net;
 mod panic;
 mod pci;
 mod trap;
@@ -24,6 +25,7 @@ pub extern "C" fn kernel_main(mbi: *const multiboot::MultibootInformation) -> ! 
     heap::init();
     trap::init();
     pci::init();
+    net::init();
 
     console::enable_echo(true);
 

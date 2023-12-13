@@ -30,10 +30,6 @@ const MAX_PHYS_REGIONS: usize = 16;
 pub const HIGH_HALF_BASE: u64 = 0xFFFF800000000000u64;
 // pub const DEVICE_BASE: u64 = 0xFFFFFFFF40000000u64;
 
-// Offset where heap starts.
-pub const HEAP_START: u64 = 0x000044444444000u64;
-pub const HEAP_SIZE: u64 = 1024 * 1024; // 1 MiB.
-
 /// Physical frame allocator. Responsible for allocating physical frames for virtual memory manager.
 static mut FRAME_ALLOCATOR: Mutex<PhysicalAllocator> = Mutex::new(PhysicalAllocator::new());
 
